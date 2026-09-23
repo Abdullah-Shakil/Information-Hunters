@@ -3,7 +3,7 @@
 from collections.abc import Iterator
 from contextlib import contextmanager
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import Session, sessionmaker
 
 from information_hunters.config import get_settings
@@ -19,6 +19,15 @@ def get_engine():
         url = get_settings().database_url
         connect_args = {"check_same_thread": False} if url.startswith("sqlite") else {}
         _engine = create_engine(url, future=True, pool_pre_ping=True, connect_args=connect_args)
+        if url.startswith("sqlite"):
+
+            @event.listens_for(_engine, "connect")
+            def _sqlite_pragmas(dbapi_conn, _record) -> None:
+                cursor = dbapi_conn.cursor()
+                cursor.execute("PRAGMA journal_mode=WAL")
+                cursor.execute("PRAGMA busy_timeout=5000")
+                cursor.close()
+
         _Session = sessionmaker(bind=_engine, expire_on_commit=False, future=True)
     return _engine
 

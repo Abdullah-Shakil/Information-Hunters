@@ -13,7 +13,7 @@ from information_hunters.config import get_settings
 from information_hunters.db import session_scope
 from information_hunters.models import Job, JobLog, Lead
 from information_hunters.providers.base import DiscoveredCompany, EnrichedCompany, Verification
-from information_hunters.providers.demo import DemoDiscovery, DemoEnricher
+from information_hunters.providers.contacts import apply_verification_contacts, pull_extra_contacts
 from information_hunters.providers.factory import build_providers
 from information_hunters.scoring import ScoreInput, score_lead
 
@@ -114,6 +114,8 @@ def process_job(job_id: str, worker_id: str, should_stop: Callable[[], bool] | N
         job = session.get(Job, job_id)
         if job is None:
             return
+        if job.status == "paused":
+            return
         if job.status in {"stopping", "stopped"}:
             job.status = "stopped"
             job.finished_at = _utcnow()
@@ -175,6 +177,9 @@ def _run(session, job: Job, delay: float, should_stop: Callable[[], bool] | None
             session.commit()
             enriched = enricher.enrich(discovered)
             verification = _verify(verifier, discovered, enriched)
+            apply_verification_contacts(enriched, verification)
+            if discovery.name != "demo" and job.contact_fetcher != "none":
+                pull_extra_contacts(session, job, enriched)
             _upsert_lead(session, job, enriched, verification, discovered)
             done = pair_index + (company_index + 1) / max(len(found), 1)
             job.progress = min(99, int(done / total * 100))
@@ -205,6 +210,3 @@ def _verify(verifier, discovered: DiscoveredCompany, enriched: EnrichedCompany) 
         return Verification(actively_trading=trading, notes=note, source="demo")
     return verifier.verify(enriched)
 
-
-# Imported for tests that want the catalogue without the factory.
-_ = (DemoDiscovery, DemoEnricher)

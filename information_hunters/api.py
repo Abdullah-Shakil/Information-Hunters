@@ -20,6 +20,26 @@ from information_hunters.models import Job, JobLog, Lead, Worker, utcnow
 from information_hunters.secrets import SECRET_NAMES, save_secret, secret_status
 
 
+class LeadPatch(BaseModel):
+    do_not_contact: bool
+
+
+class JobIn(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    categories: list[str] = Field(min_length=1)
+    regions: list[str] = Field(min_length=1)
+    limit_per_search: int = Field(default=8, ge=1, le=100)
+    discovery_provider: str = "auto"
+    verification_provider: str = "auto"
+    contact_fetcher: str = "auto"
+    incorporated_after: date | None = None
+
+
+class SecretIn(BaseModel):
+    name: str
+    value: str = Field(min_length=1)
+
+
 def create_app() -> FastAPI:
     app = FastAPI(title="Information Hunters", version="0.1.0")
 
@@ -159,9 +179,6 @@ def create_app() -> FastAPI:
             raise HTTPException(404, "Lead not found")
         return _lead_out(lead)
 
-    class LeadPatch(BaseModel):
-        do_not_contact: bool
-
     @app.patch("/leads/{lead_id}")
     def patch_lead(lead_id: str, body: LeadPatch, session: Session = Depends(db), _: None = Depends(authorised)) -> dict:
         lead = session.get(Lead, lead_id)
@@ -177,16 +194,6 @@ def create_app() -> FastAPI:
         deleted = session.query(Lead).filter(Lead.synthetic.is_(True)).delete()
         session.commit()
         return {"deleted": deleted}
-
-    class JobIn(BaseModel):
-        name: str = Field(min_length=1, max_length=200)
-        categories: list[str] = Field(min_length=1)
-        regions: list[str] = Field(min_length=1)
-        limit_per_search: int = Field(default=8, ge=1, le=100)
-        discovery_provider: str = "auto"
-        verification_provider: str = "auto"
-        contact_fetcher: str = "auto"
-        incorporated_after: date | None = None
 
     @app.post("/jobs")
     def create_job(body: JobIn, session: Session = Depends(db), _: None = Depends(authorised)) -> dict:
@@ -285,10 +292,6 @@ def create_app() -> FastAPI:
             "can_edit_secrets": bool(settings.secrets_master_key),
             "secrets": [secret_status(session, name) for name in SECRET_NAMES],
         }
-
-    class SecretIn(BaseModel):
-        name: str
-        value: str = Field(min_length=1)
 
     @app.post("/settings/secrets")
     def put_secret(body: SecretIn, session: Session = Depends(db), _: None = Depends(authorised)) -> dict:
