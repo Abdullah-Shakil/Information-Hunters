@@ -1,0 +1,27 @@
+:root {
+  color-scheme: light;
+  --bg: #efe7da;
+  --ink: #221e19;
+  --muted: #6d655b;
+  --panel: #fbf7f1;
+  --line: #e0d5c6;
+  --sidebar: #1b1814;
+  --copper: #c4552d;
+  font-family: "Iowan Old Style", "Palatino Linotype", Palatino, serif;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+}
+
+main {
+  max-width: 880px;
+  margin: 0 auto;
+  padding: 48px 24px;
+}
+
+a {
+  color: var(--copper);
+}

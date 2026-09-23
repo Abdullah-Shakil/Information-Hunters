@@ -1,0 +1,64 @@
+{
+  "categories": [
+    {
+      "id": "plumbers",
+      "label": "Plumbers",
+      "sic": "43220",
+      "sic_label": "Plumbing, heat and air-conditioning installation"
+    },
+    {
+      "id": "electricians",
+      "label": "Electricians",
+      "sic": "43210",
+      "sic_label": "Electrical installation"
+    },
+    {
+      "id": "painters",
+      "label": "Painters",
+      "sic": "43341",
+      "sic_label": "Painting"
+    },
+    {
+      "id": "gardeners",
+      "label": "Gardeners",
+      "sic": "81300",
+      "sic_label": "Landscape service activities"
+    },
+    {
+      "id": "solicitors",
+      "label": "Solicitors",
+      "sic": "69102",
+      "sic_label": "Solicitors"
+    },
+    {
+      "id": "roofers",
+      "label": "Roofers",
+      "sic": "43910",
+      "sic_label": "Roofing activities"
+    },
+    {
+      "id": "cleaners",
+      "label": "Cleaners",
+      "sic": "81210",
+      "sic_label": "General cleaning of buildings"
+    },
+    {
+      "id": "hairdressers",
+      "label": "Hairdressers",
+      "sic": "96020",
+      "sic_label": "Hairdressing and other beauty treatment"
+    }
+  ],
+  "regions": [
+    {"id": "London", "label": "London", "nation": "England", "dial": "020"},
+    {"id": "Manchester", "label": "Manchester", "nation": "England", "dial": "0161"},
+    {"id": "Birmingham", "label": "Birmingham", "nation": "England", "dial": "0121"},
+    {"id": "Leeds", "label": "Leeds", "nation": "England", "dial": "0113"},
+    {"id": "Bristol", "label": "Bristol", "nation": "England", "dial": "0117"},
+    {"id": "Sheffield", "label": "Sheffield", "nation": "England", "dial": "0114"},
+    {"id": "Liverpool", "label": "Liverpool", "nation": "England", "dial": "0151"},
+    {"id": "Cardiff", "label": "Cardiff", "nation": "Wales", "dial": "029"},
+    {"id": "Edinburgh", "label": "Edinburgh", "nation": "Scotland", "dial": "0131"},
+    {"id": "Glasgow", "label": "Glasgow", "nation": "Scotland", "dial": "0141"}
+  ]
+}
