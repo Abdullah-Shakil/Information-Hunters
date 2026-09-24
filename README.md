@@ -38,7 +38,7 @@ HTTP tick mode, for Cloud Scheduler or a function-style host:
 
 ```bash
 uvicorn information_hunters.http_worker:create_app --factory --host 0.0.0.0 --port 8080
-# POST /tick with Authorization: Bearer $WORKER_TOKEN (falls back to INTERNAL_API_TOKEN)
+# POST /tick with Authorization: Bearer $WORKER_TOKEN when WORKER_TOKEN is set
 ```
 
 ## Tests
@@ -54,7 +54,8 @@ See `.env.example`. Keys stay on the server. The Settings page can store them en
 | Variable | Purpose |
 | --- | --- |
 | `DATABASE_URL` | `sqlite:///./information_hunters.db` or `postgresql+psycopg://...` |
-| `INTERNAL_API_TOKEN` | Shared secret between the Next.js server and the Python API |
+| `WORKER_TOKEN` | Optional bearer for a public HTTP `/tick` worker URL |
+| `SECRETS_MASTER_KEY` | Encrypts provider keys saved from Settings |
 | `DEMO_MODE` | Use the synthetic catalogue when no live provider is selected |
 | `COMPANIES_HOUSE_API_KEY` | Official Companies House REST API |
 | `GOOGLE_PLACES_API_KEY` | Places text search for trading status, phone, website |
@@ -142,9 +143,9 @@ Discovery, verification, and page fetch are separate interfaces in `information_
 
 ## Website
 
-Next.js is a local control plane for starting, pausing, and reading hunts, and for directing cloud workers. There is no login — the desk is meant to stay on your machine. Server routes proxy to the Python API with `INTERNAL_API_TOKEN`. Leads can be filtered and exported to CSV. Do-not-contact is stored on the lead and omitted from the default export.
+Next.js is a local control plane for starting, pausing, and reading hunts, and for directing cloud workers. There is no login — the desk is meant to stay on your machine. Server routes proxy to the Python API with no token. Leads can be filtered and exported to CSV. Do-not-contact is stored on the lead and omitted from the default export.
 
-Change `INTERNAL_API_TOKEN` before exposing the API beyond localhost.
+Keep the API on localhost (or behind your own network) — it is open by design for the local desk.
 
 ## Compliance notes (UK GDPR and PECR)
 

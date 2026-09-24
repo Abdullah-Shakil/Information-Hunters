@@ -1,19 +1,26 @@
-"""Control-plane API. The website proxies to this with INTERNAL_API_TOKEN."""
+"""Control-plane API. Next.js desk proxies here with no user login."""
 
 from __future__ import annotations
 
 import csv
-import hmac
 import io
 from datetime import date, datetime, timedelta, timezone
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from information_hunters.catalogue import (
+    BOT_PROFILES,
+    MODEL_PROFILES,
+    SCRAPER_PROFILES,
+    build_agent,
+    enrich_model,
+)
 from information_hunters.categories import categories, regions
+from information_hunters.cloud_worker import cloud_scraper_status, latest_run, start_cloud_worker, stop_cloud_worker
 from information_hunters.config import get_settings
 from information_hunters.db import get_session_factory, init_db
 from information_hunters.models import Job, JobLog, Lead, Worker, utcnow
@@ -54,26 +61,16 @@ def create_app() -> FastAPI:
         finally:
             session.close()
 
-    def authorised(authorization: str | None = Header(default=None)) -> None:
-        expected = get_settings().internal_api_token
-        if not expected:
-            raise HTTPException(503, "API token is not configured")
-        if not authorization or not authorization.lower().startswith("bearer "):
-            raise HTTPException(401, "Missing token")
-        token = authorization.split(" ", 1)[1].strip()
-        if not hmac.compare_digest(token, expected):
-            raise HTTPException(401, "Invalid token")
-
     @app.get("/health")
     def health() -> dict:
         return {"ok": True}
 
     @app.get("/categories")
-    def list_categories(_: None = Depends(authorised)) -> dict:
+    def list_categories() -> dict:
         return {"categories": categories(), "regions": regions()}
 
     @app.get("/stats")
-    def stats(session: Session = Depends(db), _: None = Depends(authorised)) -> dict:
+    def stats(session: Session = Depends(db)) -> dict:
         now = datetime.now(timezone.utc)
         week = now - timedelta(days=7)
         leads = session.query(func.count(Lead.id)).scalar() or 0
@@ -106,7 +103,6 @@ def create_app() -> FastAPI:
     @app.get("/leads")
     def list_leads(
         session: Session = Depends(db),
-        _: None = Depends(authorised),
         q: str | None = None,
         category: str | None = None,
         location: str | None = None,
@@ -126,7 +122,6 @@ def create_app() -> FastAPI:
     @app.get("/leads/export")
     def export_leads(
         session: Session = Depends(db),
-        _: None = Depends(authorised),
         q: str | None = None,
         category: str | None = None,
         location: str | None = None,
@@ -173,14 +168,14 @@ def create_app() -> FastAPI:
         )
 
     @app.get("/leads/{lead_id}")
-    def get_lead(lead_id: str, session: Session = Depends(db), _: None = Depends(authorised)) -> dict:
+    def get_lead(lead_id: str, session: Session = Depends(db)) -> dict:
         lead = session.get(Lead, lead_id)
         if lead is None:
             raise HTTPException(404, "Lead not found")
         return _lead_out(lead)
 
     @app.patch("/leads/{lead_id}")
-    def patch_lead(lead_id: str, body: LeadPatch, session: Session = Depends(db), _: None = Depends(authorised)) -> dict:
+    def patch_lead(lead_id: str, body: LeadPatch, session: Session = Depends(db)) -> dict:
         lead = session.get(Lead, lead_id)
         if lead is None:
             raise HTTPException(404, "Lead not found")
@@ -190,13 +185,13 @@ def create_app() -> FastAPI:
         return _lead_out(lead)
 
     @app.post("/leads/purge-synthetic")
-    def purge(session: Session = Depends(db), _: None = Depends(authorised)) -> dict:
+    def purge(session: Session = Depends(db)) -> dict:
         deleted = session.query(Lead).filter(Lead.synthetic.is_(True)).delete()
         session.commit()
         return {"deleted": deleted}
 
     @app.post("/jobs")
-    def create_job(body: JobIn, session: Session = Depends(db), _: None = Depends(authorised)) -> dict:
+    def create_job(body: JobIn, session: Session = Depends(db)) -> dict:
         known_c = {item["id"] for item in categories()}
         known_r = {item["id"] for item in regions()}
         if set(body.categories) - known_c or set(body.regions) - known_r:
@@ -220,26 +215,26 @@ def create_app() -> FastAPI:
         return _job_out(job)
 
     @app.get("/jobs")
-    def list_jobs(session: Session = Depends(db), _: None = Depends(authorised)) -> dict:
+    def list_jobs(session: Session = Depends(db)) -> dict:
         rows = session.query(Job).order_by(Job.created_at.desc()).limit(100).all()
         return {"items": [_job_out(row) for row in rows]}
 
     @app.get("/jobs/{job_id}")
-    def get_job(job_id: str, session: Session = Depends(db), _: None = Depends(authorised)) -> dict:
+    def get_job(job_id: str, session: Session = Depends(db)) -> dict:
         job = session.get(Job, job_id)
         if job is None:
             raise HTTPException(404, "Hunt not found")
         return _job_out(job)
 
     @app.get("/jobs/{job_id}/logs")
-    def job_logs(job_id: str, session: Session = Depends(db), _: None = Depends(authorised)) -> dict:
+    def job_logs(job_id: str, session: Session = Depends(db)) -> dict:
         if session.get(Job, job_id) is None:
             raise HTTPException(404, "Hunt not found")
         rows = session.query(JobLog).filter(JobLog.job_id == job_id).order_by(JobLog.created_at.asc()).limit(300).all()
         return {"items": [{"id": row.id, "level": row.level, "message": row.message, "created_at": row.created_at.isoformat()} for row in rows]}
 
     @app.post("/jobs/{job_id}/start")
-    def start_job(job_id: str, session: Session = Depends(db), _: None = Depends(authorised)) -> dict:
+    def start_job(job_id: str, session: Session = Depends(db)) -> dict:
         job = _require_job(session, job_id)
         if job.status == "running":
             return _job_out(job)
@@ -259,7 +254,7 @@ def create_app() -> FastAPI:
         return _job_out(job)
 
     @app.post("/jobs/{job_id}/pause")
-    def pause_job(job_id: str, session: Session = Depends(db), _: None = Depends(authorised)) -> dict:
+    def pause_job(job_id: str, session: Session = Depends(db)) -> dict:
         job = _require_job(session, job_id)
         if job.status not in {"queued", "running"}:
             raise HTTPException(409, "Only a queued or running hunt can be paused")
@@ -269,7 +264,7 @@ def create_app() -> FastAPI:
         return _job_out(job)
 
     @app.post("/jobs/{job_id}/stop")
-    def stop_job(job_id: str, session: Session = Depends(db), _: None = Depends(authorised)) -> dict:
+    def stop_job(job_id: str, session: Session = Depends(db)) -> dict:
         job = _require_job(session, job_id)
         if job.status in {"completed", "stopped"}:
             return _job_out(job)
@@ -283,8 +278,40 @@ def create_app() -> FastAPI:
         session.commit()
         return _job_out(job)
 
+    @app.get("/fleet")
+    def fleet(session: Session = Depends(db)) -> dict:
+        """Scrapers (cloud workers) + bots (pipeline roles), Find-style."""
+        return _fleet_payload(session)
+
+    @app.post("/fleet/cloud/start")
+    def fleet_cloud_start() -> dict:
+        try:
+            return start_cloud_worker()
+        except RuntimeError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+
+    @app.post("/fleet/cloud/stop")
+    def fleet_cloud_stop() -> dict:
+        try:
+            return stop_cloud_worker()
+        except RuntimeError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+
+    @app.get("/bots")
+    def bots(session: Session = Depends(db)) -> list:
+        data = _fleet_payload(session)
+        return data["scrapers"] + data["bots"]
+
+    @app.get("/models")
+    def models(session: Session = Depends(db)) -> list:
+        return list(_fleet_payload(session)["models_by_id"].values())
+
     @app.get("/settings")
-    def settings_view(session: Session = Depends(db), _: None = Depends(authorised)) -> dict:
+    def settings_view(session: Session = Depends(db)) -> dict:
         settings = get_settings()
         return {
             "demo_mode": settings.demo_mode,
@@ -294,7 +321,7 @@ def create_app() -> FastAPI:
         }
 
     @app.post("/settings/secrets")
-    def put_secret(body: SecretIn, session: Session = Depends(db), _: None = Depends(authorised)) -> dict:
+    def put_secret(body: SecretIn, session: Session = Depends(db)) -> dict:
         try:
             save_secret(session, body.name, body.value.strip())
         except ValueError as exc:
@@ -304,6 +331,138 @@ def create_app() -> FastAPI:
         return secret_status(session, body.name)
 
     return app
+
+
+def _fleet_payload(session: Session) -> dict:
+    settings = get_settings()
+    now = datetime.now(timezone.utc)
+    workers = session.query(Worker).order_by(Worker.last_seen.desc()).all()
+    live_workers = [
+        w
+        for w in workers
+        if w.last_seen and (now - (w.last_seen if w.last_seen.tzinfo else w.last_seen.replace(tzinfo=timezone.utc))).total_seconds() < 90
+    ]
+    active_jobs = session.query(func.count(Job.id)).filter(Job.status.in_(["queued", "running"])).scalar() or 0
+    running = session.query(func.count(Job.id)).filter(Job.status == "running").scalar() or 0
+
+    def secret_on(name: str) -> tuple[bool, str | None]:
+        if not name:
+            return True, None
+        status = secret_status(session, name)
+        hint = f"···{status['last4']}" if status.get("last4") else name
+        return bool(status.get("configured")), hint if status.get("configured") else name
+
+    models_by_id: dict[str, dict] = {}
+    for mid, meta in MODEL_PROFILES.items():
+        env = meta.get("api_key_env") or ""
+        if mid == "apify":
+            ok_token, hint = secret_on("APIFY_TOKEN")
+            ok_actor, _ = secret_on("APIFY_ACTOR_ID")
+            connected = ok_token and ok_actor
+            hint = hint if ok_token else "APIFY_TOKEN + APIFY_ACTOR_ID"
+        elif env:
+            connected, hint = secret_on(env)
+        else:
+            connected, hint = True, None
+        models_by_id[mid] = enrich_model(mid, connected, hint)
+
+    # Also expose ScrapingBee as a helper model even if not primary for extract
+    if "scrapingbee" in models_by_id:
+        ok, hint = secret_on("SCRAPINGBEE_API_KEY")
+        models_by_id["scrapingbee"] = enrich_model("scrapingbee", ok, hint)
+
+    def model_for(model_id: str | None) -> dict | None:
+        if not model_id:
+            return None
+        return models_by_id.get(model_id)
+
+    # Scraper statuses — only cloud worker(s) you start/stop
+    db_cloud = settings.database_url.startswith("postgresql")
+    run = latest_run()
+    scrapers = []
+    for sid, profile in SCRAPER_PROFILES.items():
+        if sid == "github-actions":
+            status = cloud_scraper_status(db_cloud=db_cloud, active_jobs=active_jobs)
+        else:
+            status = "idle"
+        agent = build_agent(sid, profile, status=status, model=model_for(profile.get("model_id")))
+        if sid == "github-actions":
+            if not db_cloud:
+                agent["activation"] = {
+                    "state": "needs_activate",
+                    "label": "Needs cloud DB",
+                    "detail": "Point DATABASE_URL at Supabase so the cloud worker shares hunts with this desk.",
+                    "key_hint": "DATABASE_URL",
+                }
+            elif not (settings.github_token or "").strip():
+                agent["activation"] = {
+                    "state": "needs_activate",
+                    "label": "Needs GITHUB_TOKEN",
+                    "detail": "Add a GitHub PAT (Actions write) to .env as GITHUB_TOKEN to use Start / Stop here.",
+                    "key_hint": "GITHUB_TOKEN",
+                }
+            elif status == "live":
+                agent["activation"] = {
+                    "state": "connected",
+                    "label": "Running",
+                    "detail": "Cloud worker run is in progress. Bots process queued hunts automatically.",
+                    "key_hint": None,
+                }
+            else:
+                agent["activation"] = {
+                    "state": "connected",
+                    "label": "Ready",
+                    "detail": "Press Start to run now, or wait for the 15-minute schedule. Device can be off.",
+                    "key_hint": None,
+                }
+            agent["cloud_run"] = run
+        scrapers.append(agent)
+
+    # Bot statuses from secrets + whether hunts are running
+    bots = []
+    for bid, profile in BOT_PROFILES.items():
+        model = model_for(profile.get("model_id"))
+        env = (MODEL_PROFILES.get(profile.get("model_id") or "", {}) or {}).get("api_key_env") or ""
+        if bid == "score" or bid == "extract":
+            # extract works without key (direct); score always local
+            status = "live" if running else "ready"
+        elif env and model and not model.get("connected"):
+            status = "paused"
+        elif running:
+            status = "live"
+        elif model and model.get("connected"):
+            status = "ready"
+        elif settings.demo_mode:
+            status = "ready"
+        else:
+            status = "idle"
+        # Prefer ScrapingBee model detail on extract when that key is set
+        if bid == "extract" and models_by_id.get("scrapingbee", {}).get("connected"):
+            model = models_by_id["scrapingbee"]
+        bots.append(build_agent(bid, profile, status=status, model=model))
+
+    scrapers.sort(key=lambda row: (-row["importance"], row["name"]))
+    bots.sort(key=lambda row: (-row["importance"], row["name"]))
+
+    return {
+        "scrapers": scrapers,
+        "bots": bots,
+        "models_by_id": models_by_id,
+        "workers": [
+            {
+                "id": w.id,
+                "hostname": w.hostname,
+                "last_seen": w.last_seen.isoformat() if w.last_seen else None,
+                "current_job_id": w.current_job_id,
+                "live": w in live_workers,
+            }
+            for w in workers
+        ],
+        "active_jobs": active_jobs,
+        "database": "postgres" if db_cloud else "sqlite",
+        "cloud_run": run,
+        "can_start_cloud": bool((settings.github_token or "").strip()) and db_cloud,
+    }
 
 
 def _require_job(session: Session, job_id: str) -> Job:

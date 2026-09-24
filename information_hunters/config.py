@@ -7,7 +7,6 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     database_url: str = "sqlite:///./information_hunters.db"
-    internal_api_token: str = "dev-internal-token"
     demo_mode: bool = True
     secrets_master_key: str = ""
     companies_house_api_key: str = ""
@@ -22,7 +21,10 @@ class Settings(BaseSettings):
     companies_house_rps: float = 2.0
     demo_step_delay_ms: int = 120
     worker_token: str = ""
-
+    github_token: str = ""
+    github_repo: str = "Abdullah-Shakil/Information-Hunters"
+    github_workflow: str = "cloud-worker.yml"
+    github_ref: str = "main"
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 

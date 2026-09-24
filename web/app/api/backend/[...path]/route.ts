@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 
 const ALLOWED =
-  /^(stats|categories|settings|settings\/secrets|leads|leads\/export|leads\/purge-synthetic|leads\/[0-9a-fA-F-]{36}|jobs|jobs\/[0-9a-fA-F-]{36}|jobs\/[0-9a-fA-F-]{36}\/(start|pause|stop|logs))$/;
+  /^(stats|categories|settings|settings\/secrets|fleet|fleet\/cloud\/(start|stop)|bots|models|leads|leads\/export|leads\/purge-synthetic|leads\/[0-9a-fA-F-]{36}|jobs|jobs\/[0-9a-fA-F-]{36}|jobs\/[0-9a-fA-F-]{36}\/(start|pause|stop|logs))$/;
 
 async function proxy(request: NextRequest, context: { params: Promise<{ path: string[] }> }) {
   const { path } = await context.params;
@@ -10,9 +10,7 @@ async function proxy(request: NextRequest, context: { params: Promise<{ path: st
     return NextResponse.json({ detail: "Not found" }, { status: 404 });
   }
   const base = process.env.API_INTERNAL_URL || "http://127.0.0.1:8000";
-  const token = process.env.INTERNAL_API_TOKEN || "";
   const headers = new Headers();
-  headers.set("Authorization", `Bearer ${token}`);
   const contentType = request.headers.get("content-type");
   if (contentType) headers.set("Content-Type", contentType);
   const response = await fetch(`${base}/${joined}${request.nextUrl.search}`, {

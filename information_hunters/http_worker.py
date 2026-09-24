@@ -19,9 +19,11 @@ def create_app() -> FastAPI:
         init_db()
 
     def authorised(authorization: str | None = Header(default=None)) -> None:
-        settings = get_settings()
-        expected = settings.worker_token or settings.internal_api_token
-        if not expected or not authorization or not authorization.lower().startswith("bearer "):
+        # Optional gate for a public /tick URL (Cloud Run). Desk API has no auth.
+        expected = get_settings().worker_token
+        if not expected:
+            return
+        if not authorization or not authorization.lower().startswith("bearer "):
             raise HTTPException(401, "Missing token")
         token = authorization.split(" ", 1)[1].strip()
         if not hmac.compare_digest(token, expected):

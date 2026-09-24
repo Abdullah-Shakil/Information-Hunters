@@ -2,7 +2,7 @@
 # Requires a hosted Postgres DATABASE_URL (Neon or Supabase free tier).
 #
 # Repo → Settings → Secrets and variables → Actions:
-#   DATABASE_URL, INTERNAL_API_TOKEN, SECRETS_MASTER_KEY
+#   DATABASE_URL, SECRETS_MASTER_KEY
 #   plus any provider keys you use (COMPANIES_HOUSE_API_KEY, etc.)
 #
 # Local desk: set the same DATABASE_URL in .env so queued hunts land in that DB.
@@ -28,7 +28,6 @@ jobs:
       - name: Process queued hunts
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          INTERNAL_API_TOKEN: ${{ secrets.INTERNAL_API_TOKEN }}
           SECRETS_MASTER_KEY: ${{ secrets.SECRETS_MASTER_KEY }}
           DEMO_MODE: ${{ secrets.DEMO_MODE }}
           COMPANIES_HOUSE_API_KEY: ${{ secrets.COMPANIES_HOUSE_API_KEY }}

@@ -5,7 +5,6 @@ from fastapi.testclient import TestClient
 @pytest.fixture()
 def client(tmp_path, monkeypatch):
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path}/test.db")
-    monkeypatch.setenv("INTERNAL_API_TOKEN", "test-token")
     monkeypatch.setenv("DEMO_MODE", "true")
     monkeypatch.setenv("SECRETS_MASTER_KEY", "test-master-key")
     monkeypatch.setenv("DEMO_STEP_DELAY_MS", "0")
@@ -20,8 +19,3 @@ def client(tmp_path, monkeypatch):
         yield test_client
     reset_engine()
     get_settings.cache_clear()
-
-
-@pytest.fixture()
-def auth_header():
-    return {"Authorization": "Bearer test-token"}
