@@ -39,7 +39,12 @@ class ScrapingBeeFetcher:
             "https://app.scrapingbee.com/api/v1/",
             params={"api_key": self.api_key, "url": url, "render_js": "false"},
         )
-        response.raise_for_status()
+        if response.status_code in {401, 402, 403}:
+            raise ProviderError("ScrapingBee rejected the request. The key may be wrong or the free credits are exhausted.")
+        if response.status_code == 429:
+            raise ProviderError("ScrapingBee credit limit reached.")
+        if response.status_code >= 400:
+            raise ProviderError(f"ScrapingBee returned HTTP {response.status_code}")
         return response.text[:1_000_000]
 
 
@@ -60,8 +65,23 @@ class BrightDataFetcher:
             headers={"Authorization": f"Bearer {self.api_token}"},
             json={"zone": self.zone, "url": url, "format": "raw"},
         )
-        response.raise_for_status()
+        if response.status_code in {401, 403}:
+            raise ProviderError("Bright Data rejected the token.")
+        if response.status_code >= 400:
+            raise ProviderError(f"Bright Data returned HTTP {response.status_code}")
         return response.text[:1_000_000]
+
+
+def _apply_stealth(page) -> None:
+    """Use playwright-stealth when it is installed. A missing package still fetches the page."""
+    try:
+        from playwright_stealth import stealth_sync
+    except ImportError:
+        return
+    try:
+        stealth_sync(page)
+    except Exception:
+        return
 
 
 class PlaywrightFetcher:
@@ -79,6 +99,7 @@ class PlaywrightFetcher:
             browser = playwright.chromium.launch(headless=True)
             try:
                 page = browser.new_page(locale="en-GB", viewport={"width": 1280, "height": 800})
+                _apply_stealth(page)
                 page.goto(url, wait_until="domcontentloaded", timeout=20000)
                 return page.content()[:1_000_000]
             finally:

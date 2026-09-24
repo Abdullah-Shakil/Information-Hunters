@@ -16,8 +16,10 @@ _Session: sessionmaker | None = None
 def get_engine():
     global _engine, _Session
     if _engine is None:
-        url = get_settings().database_url
-        connect_args = {"check_same_thread": False} if url.startswith("sqlite") else {}
+        url = get_settings().resolved_database_url()
+        connect_args: dict = {"check_same_thread": False} if url.startswith("sqlite") else {}
+        if ":6543" in url and "pooler.supabase.com" in url:
+            connect_args = {"prepare_threshold": 0}
         _engine = create_engine(url, future=True, pool_pre_ping=True, connect_args=connect_args)
         if url.startswith("sqlite"):
 

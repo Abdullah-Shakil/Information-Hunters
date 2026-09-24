@@ -9,7 +9,16 @@ from information_hunters.providers.base import EnrichedCompany, Verification
 from information_hunters.providers.fetchers import build_fetcher
 from information_hunters.providers.html_extract import extract_contacts
 from information_hunters.providers.safety import usable_website
+from information_hunters.ops import is_quota
 from information_hunters.secrets import resolve_secret
+from information_hunters.telemetry import record_error
+
+
+def _safe_error(exc: Exception) -> str:
+    text = str(exc)
+    if "api_key=" in text or "token=" in text:
+        return type(exc).__name__
+    return text[:300]
 
 
 def apply_verification_contacts(company: EnrichedCompany, verification: Verification) -> None:
@@ -39,7 +48,21 @@ def pull_extra_contacts(session: Session, job: Job, company: EnrichedCompany) ->
             try:
                 html = fetcher.fetch(company.website)
             except Exception as exc:
-                company.sources.append({"provider": fetcher.name, "reference": f"fetch failed: {exc}"[:300]})
+                message = _safe_error(exc)
+                company.sources.append({"provider": fetcher.name, "reference": f"fetch failed: {message}"[:300]})
+                record_error(
+                    session,
+                    message,
+                    error_type=type(exc).__name__,
+                    provider=fetcher.name,
+                    job=job,
+                    context={"company": company.company_number},
+                    commit=True,
+                )
+                if fetcher.name == "scrapingbee" and is_quota(402 if "credit" in message.lower() else 400, {"message": message}):
+                    from information_hunters.telemetry import mark_quota
+
+                    mark_quota(session, "scrapingbee", message)
             else:
                 found = extract_contacts(html)
                 if found.get("email") and not company.email:

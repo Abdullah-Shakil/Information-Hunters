@@ -16,7 +16,10 @@ from sqlalchemy.orm import Session
 from information_hunters.categories import categories, regions
 from information_hunters.config import get_settings
 from information_hunters.db import get_session_factory, init_db
+from information_hunters.hosts.service import HostRequestError, list_hosts, refresh_host, save_host, start_host, stop_host, test_host
+from information_hunters.insights import activity_view, errors_view, performance_view
 from information_hunters.models import Job, JobLog, Lead, Worker, utcnow
+from information_hunters.providers.connection import test_provider
 from information_hunters.secrets import SECRET_NAMES, save_secret, secret_status
 
 
@@ -38,6 +41,14 @@ class JobIn(BaseModel):
 class SecretIn(BaseModel):
     name: str
     value: str = Field(min_length=1)
+
+
+class HostValues(BaseModel):
+    values: dict[str, str] = Field(default_factory=dict)
+
+
+class ProviderTest(BaseModel):
+    provider: str
 
 
 def create_app() -> FastAPI:
@@ -251,6 +262,7 @@ def create_app() -> FastAPI:
             job.rejected_count = 0
             job.error = None
             job.finished_at = None
+            job.started_at = None
         job.status = "queued"
         job.stage = "Queued"
         session.commit()
@@ -286,9 +298,12 @@ def create_app() -> FastAPI:
     @app.get("/settings")
     def settings_view(session: Session = Depends(db), _: None = Depends(authorised)) -> dict:
         settings = get_settings()
+        database_url = settings.resolved_database_url()
         return {
             "demo_mode": settings.demo_mode,
-            "database": "postgres" if settings.database_url.startswith("postgresql") else "sqlite",
+            "database": "postgres" if database_url.startswith("postgresql") else "sqlite",
+            "supabase_url_set": bool(settings.supabase_url),
+            "supabase_key_set": bool(settings.supabase_service_role_key),
             "can_edit_secrets": bool(settings.secrets_master_key),
             "secrets": [secret_status(session, name) for name in SECRET_NAMES],
         }
@@ -302,6 +317,94 @@ def create_app() -> FastAPI:
         except RuntimeError as exc:
             raise HTTPException(400, str(exc)) from exc
         return secret_status(session, body.name)
+
+    @app.post("/settings/test")
+    def test_settings(body: ProviderTest, session: Session = Depends(db), _: None = Depends(authorised)) -> dict:
+        if body.provider in {"companies_house", "google_places", "scrapingbee", "brightdata", "supabase"}:
+            result = test_provider(session, body.provider)
+            if body.provider == "scrapingbee" and result.status == "quota_exhausted":
+                from information_hunters.telemetry import mark_quota
+
+                mark_quota(session, "scrapingbee", result.detail)
+            return {"ok": result.ok, "status": result.status, "detail": result.detail, "usage": result.usage}
+        try:
+            return test_host(session, body.provider)
+        except HostRequestError as exc:
+            raise HTTPException(exc.http_status, exc.message) from exc
+
+    @app.get("/hosts")
+    def hosts(session: Session = Depends(db), _: None = Depends(authorised)) -> dict:
+        return list_hosts(session)
+
+    @app.post("/hosts/{provider}")
+    def put_host(provider: str, body: HostValues, session: Session = Depends(db), _: None = Depends(authorised)) -> dict:
+        try:
+            return save_host(session, provider, body.values)
+        except HostRequestError as exc:
+            raise HTTPException(exc.http_status, exc.message) from exc
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(400, str(exc)) from exc
+
+    @app.post("/hosts/{provider}/test")
+    def host_test(provider: str, session: Session = Depends(db), _: None = Depends(authorised)) -> dict:
+        try:
+            return test_host(session, provider)
+        except HostRequestError as exc:
+            raise HTTPException(exc.http_status, exc.message) from exc
+
+    @app.post("/hosts/{provider}/start")
+    def host_start(provider: str, session: Session = Depends(db), _: None = Depends(authorised)) -> dict:
+        try:
+            return start_host(session, provider)
+        except HostRequestError as exc:
+            raise HTTPException(exc.http_status, exc.message) from exc
+
+    @app.post("/hosts/{provider}/stop")
+    def host_stop(provider: str, session: Session = Depends(db), _: None = Depends(authorised)) -> dict:
+        try:
+            return stop_host(session, provider)
+        except HostRequestError as exc:
+            raise HTTPException(exc.http_status, exc.message) from exc
+
+    @app.post("/hosts/{provider}/refresh")
+    def host_refresh(provider: str, session: Session = Depends(db), _: None = Depends(authorised)) -> dict:
+        try:
+            return refresh_host(session, provider)
+        except HostRequestError as exc:
+            raise HTTPException(exc.http_status, exc.message) from exc
+
+    @app.get("/performance")
+    def performance(
+        session: Session = Depends(db),
+        _: None = Depends(authorised),
+        host: str | None = None,
+        worker: str | None = None,
+        limit: int = Query(100, ge=1, le=200),
+    ) -> dict:
+        return performance_view(session, host=host, worker=worker, limit=limit)
+
+    @app.get("/errors")
+    def errors(
+        session: Session = Depends(db),
+        _: None = Depends(authorised),
+        host: str | None = None,
+        provider: str | None = None,
+        error_type: str | None = None,
+        limit: int = Query(200, ge=1, le=500),
+    ) -> dict:
+        return errors_view(session, host=host, provider=provider, error_type=error_type, limit=limit)
+
+    @app.get("/activity")
+    def activity(
+        session: Session = Depends(db),
+        _: None = Depends(authorised),
+        host: str | None = None,
+        kind: str | None = None,
+        limit: int = Query(80, ge=1, le=200),
+    ) -> dict:
+        return activity_view(session, host=host, kind=kind, limit=limit)
 
     return app
 

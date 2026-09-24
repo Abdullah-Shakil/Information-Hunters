@@ -1,0 +1,36 @@
+# Dispatched by the Hosts page. It does not run on push.
+# One run keeps polling until Stop cancels it, GitHub's 6-hour job limit, or free minutes run out.
+name: Hunt
+
+on:
+  workflow_dispatch:
+
+jobs:
+  hunt:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: pip install .
+      - name: Hunt until cancelled
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          SECRETS_MASTER_KEY: ${{ secrets.SECRETS_MASTER_KEY }}
+          COMPANIES_HOUSE_API_KEY: ${{ secrets.COMPANIES_HOUSE_API_KEY }}
+          GOOGLE_PLACES_API_KEY: ${{ secrets.GOOGLE_PLACES_API_KEY }}
+          SCRAPINGBEE_API_KEY: ${{ secrets.SCRAPINGBEE_API_KEY }}
+          APIFY_TOKEN: ${{ secrets.APIFY_TOKEN }}
+          APIFY_ACTOR_ID: ${{ secrets.APIFY_ACTOR_ID }}
+          HOST_ID: github_actions
+          WORKER_ID: github-actions
+          DEMO_MODE: "false"
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "Add a DATABASE_URL repository secret: the Supabase Postgres URI (session pooler)."
+            exit 1
+          fi
+          python -m information_hunters.worker

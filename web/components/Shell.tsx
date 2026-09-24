@@ -9,6 +9,9 @@ const LINKS = [
   ["/", "Overview"],
   ["/leads", "Leads"],
   ["/hunts", "Hunts"],
+  ["/hosts", "Hosts"],
+  ["/activity", "Live Activity"],
+  ["/performance", "Performance"],
   ["/settings", "Settings"],
 ];
 

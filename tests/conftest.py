@@ -14,10 +14,14 @@ def client(tmp_path, monkeypatch):
 
     get_settings.cache_clear()
     reset_engine()
+    from information_hunters.ops import reset_http_client_factory
+
+    reset_http_client_factory()
     from information_hunters.api import create_app
 
     with TestClient(create_app()) as test_client:
         yield test_client
+    reset_http_client_factory()
     reset_engine()
     get_settings.cache_clear()
 
