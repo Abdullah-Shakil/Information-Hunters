@@ -87,7 +87,7 @@ def serve_forever() -> None:
     signal.signal(signal.SIGTERM, request_stop)
     signal.signal(signal.SIGINT, request_stop)
     worker_id = worker_identity()
-    log.info("Worker %s polling %s", worker_id, settings.database_url.split("@")[-1])
+    log.info("Worker %s polling %s", worker_id, settings.resolved_database_url().split("@")[-1])
     while not _stop:
         _touch(worker_id, None)
         job_id = claim_next_job(worker_id)

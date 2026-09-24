@@ -1,11 +1,14 @@
 # Free cloud worker: claim queued hunts every 15 minutes without your PC.
-# Requires a hosted Postgres DATABASE_URL (Neon or Supabase free tier).
+# Requires a hosted Postgres DATABASE_URL or SUPABASE_DB_URL (Supabase free tier).
 #
 # Repo → Settings → Secrets and variables → Actions:
-#   DATABASE_URL, INTERNAL_API_TOKEN, SECRETS_MASTER_KEY
-#   plus any provider keys you use (COMPANIES_HOUSE_API_KEY, etc.)
+#   DATABASE_URL or SUPABASE_DB_URL, SECRETS_MASTER_KEY
+#   plus any provider keys you use (optional if those keys are already in the database)
 #
-# Local desk: set the same DATABASE_URL in .env so queued hunts land in that DB.
+# Start on the Scrapers or Hosts page sets the repository variable
+# CLOUD_WORKER_ENABLED=true and dispatches this workflow.
+# Stop sets CLOUD_WORKER_ENABLED=false and cancels the current run.
+# If that variable is unset, the schedule still runs.
 
 name: Cloud worker
 
@@ -16,6 +19,7 @@ on:
 
 jobs:
   once:
+    if: ${{ vars.CLOUD_WORKER_ENABLED != 'false' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -28,13 +32,20 @@ jobs:
       - name: Process queued hunts
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          INTERNAL_API_TOKEN: ${{ secrets.INTERNAL_API_TOKEN }}
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
           SECRETS_MASTER_KEY: ${{ secrets.SECRETS_MASTER_KEY }}
-          DEMO_MODE: ${{ secrets.DEMO_MODE }}
+          DEMO_MODE: "false"
           COMPANIES_HOUSE_API_KEY: ${{ secrets.COMPANIES_HOUSE_API_KEY }}
           GOOGLE_PLACES_API_KEY: ${{ secrets.GOOGLE_PLACES_API_KEY }}
           SCRAPINGBEE_API_KEY: ${{ secrets.SCRAPINGBEE_API_KEY }}
           APIFY_TOKEN: ${{ secrets.APIFY_TOKEN }}
           APIFY_ACTOR_ID: ${{ secrets.APIFY_ACTOR_ID }}
           CONTACT_FETCHER: auto
-        run: python -m information_hunters.once
+          HOST_ID: github_actions
+          WORKER_ID: github-actions
+        run: |
+          if [ -z "$DATABASE_URL" ] && [ -z "$SUPABASE_DB_URL" ]; then
+            echo "Add a DATABASE_URL or SUPABASE_DB_URL repository secret (Supabase session-pooler URI)."
+            exit 1
+          fi
+          python -m information_hunters.once

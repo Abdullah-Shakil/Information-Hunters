@@ -23,7 +23,8 @@ class ApifyEnricher:
         )
         if response.status_code in {401, 403}:
             raise ProviderError("Apify rejected the token")
-        response.raise_for_status()
+        if response.status_code >= 400:
+            raise ProviderError(f"Apify returned HTTP {response.status_code}")
         items = response.json()
         if isinstance(items, dict):
             items = items.get("items") or []

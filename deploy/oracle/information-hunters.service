@@ -1,0 +1,18 @@
+[Unit]
+Description=Information Hunters worker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/information-hunters
+Environment=HOST_ID=oracle_cloud
+Environment=WORKER_ID=oracle-cloud
+Environment=DEMO_MODE=false
+EnvironmentFile=/etc/information-hunters.env
+ExecStart=/opt/information-hunters/.venv/bin/python -m information_hunters.worker
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

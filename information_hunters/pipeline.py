@@ -16,6 +16,7 @@ from information_hunters.providers.base import DiscoveredCompany, EnrichedCompan
 from information_hunters.providers.contacts import apply_verification_contacts, pull_extra_contacts
 from information_hunters.providers.factory import build_providers
 from information_hunters.scoring import ScoreInput, score_lead
+from information_hunters.telemetry import found_message, provider_label, record_activity, record_error, touch_run_metric
 
 
 def _utcnow() -> datetime:
@@ -43,6 +44,7 @@ def _halt(session, job: Job, should_stop: Callable[[], bool] | None) -> str | No
 def _finish_halt(session, job: Job, reason: str) -> None:
     if reason == "paused":
         job.stage = "Paused"
+        touch_run_metric(session, job)
         add_log(session, job, "info", "Paused by operator.")
         return
     if reason == "requeued":
@@ -50,6 +52,7 @@ def _finish_halt(session, job: Job, reason: str) -> None:
     job.status = "stopped"
     job.stage = "Stopped"
     job.finished_at = _utcnow()
+    touch_run_metric(session, job)
     add_log(session, job, "info", "Stopped by operator.")
 
 
@@ -70,6 +73,8 @@ def _upsert_lead(session, job: Job, enriched: EnrichedCompany, verification: Ver
     )
     if not result.qualified:
         job.rejected_count += 1
+        touch_run_metric(session, job)
+        record_activity(session, f"Rejected {enriched.name}: {result.reasons[0]}", kind="rejected", job=job, detail={"name": enriched.name, "reason": result.reasons[0]})
         add_log(session, job, "info", f"Rejected {enriched.name}: {result.reasons[0]}")
         return
 
@@ -104,6 +109,26 @@ def _upsert_lead(session, job: Job, enriched: EnrichedCompany, verification: Ver
     if existing is None:
         session.add(lead)
     job.qualified_count += 1
+    message = found_message(enriched.name, enriched.email, enriched.mobile, enriched.phone, enriched.has_website, enriched.website)
+    record_activity(
+        session,
+        message,
+        kind="found",
+        job=job,
+        detail={
+            "name": enriched.name,
+            "email": enriched.email,
+            "mobile": enriched.mobile,
+            "phone": enriched.phone,
+            "website": enriched.website,
+            "has_website": enriched.has_website,
+            "company_number": enriched.company_number,
+            "category": enriched.category,
+            "location": enriched.region,
+            "priority_score": result.score,
+        },
+    )
+    touch_run_metric(session, job)
     add_log(session, job, "info", f"Qualified {enriched.name} · priority {result.score} ({result.band})")
 
 
@@ -137,6 +162,8 @@ def process_job(job_id: str, worker_id: str, should_stop: Callable[[], bool] | N
                 job.error = str(exc)[:2000]
                 job.finished_at = _utcnow()
                 job.stage = "Failed"
+                record_error(session, str(exc)[:2000], error_type=type(exc).__name__, provider=job.discovery_provider, job=job, context={"stage": job.stage})
+                touch_run_metric(session, job)
                 add_log(session, job, "error", f"Hunt failed: {exc}")
             raise
 
@@ -146,6 +173,7 @@ def _run(session, job: Job, delay: float, should_stop: Callable[[], bool] | None
     pairs = [(c, r) for c in job.categories for r in job.regions]
     total = max(len(pairs), 1)
     start_pair, start_company = _checkpoint(job)
+    touch_run_metric(session, job)
     add_log(session, job, "info", f"Hunt started with {discovery.name} / {verifier.name}.")
 
     for pair_index, (category, region) in enumerate(pairs):
@@ -156,6 +184,13 @@ def _run(session, job: Job, delay: float, should_stop: Callable[[], bool] | None
             _finish_halt(session, job, halt)
             return
         job.stage = f"Discovering {category} in {region}"
+        record_activity(
+            session,
+            f"Searching {provider_label(discovery.name)} for {category} in {region}",
+            kind="searching",
+            job=job,
+            detail={"category": category, "region": region, "provider": discovery.name},
+        )
         session.commit()
         after = job.incorporated_after
         if isinstance(after, datetime):
@@ -193,6 +228,7 @@ def _run(session, job: Job, delay: float, should_stop: Callable[[], bool] | None
     job.progress = 100
     job.checkpoint = None
     job.finished_at = _utcnow()
+    touch_run_metric(session, job)
     add_log(session, job, "info", f"Completed. {job.qualified_count} qualified, {job.rejected_count} rejected.")
 
 

@@ -1,0 +1,8 @@
+{
+  "actorSpecification": 1,
+  "name": "information-hunters",
+  "title": "Information Hunters",
+  "description": "Polls Supabase for hunts and writes leads, activity, and errors. Set DATABASE_URL, SECRETS_MASTER_KEY, and HOST_ID=apify on the actor.",
+  "version": "0.1",
+  "dockerfile": "./docker/worker.Dockerfile"
+}

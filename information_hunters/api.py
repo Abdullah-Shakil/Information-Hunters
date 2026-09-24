@@ -1,4 +1,4 @@
-"""Control-plane API. The website proxies to this with INTERNAL_API_TOKEN."""
+"""Control-plane API. The Next.js desk proxies here with INTERNAL_API_TOKEN. There is no user login."""
 
 from __future__ import annotations
 
@@ -13,10 +13,21 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from information_hunters.catalogue import (
+    BOT_PROFILES,
+    MODEL_PROFILES,
+    SCRAPER_PROFILES,
+    build_agent,
+    enrich_model,
+)
 from information_hunters.categories import categories, regions
+from information_hunters.cloud_worker import github_ready, latest_run, start_cloud_worker, stop_cloud_worker
 from information_hunters.config import get_settings
 from information_hunters.db import get_session_factory, init_db
+from information_hunters.hosts.service import HostRequestError, list_hosts, refresh_host, save_host, start_host, stop_host, test_host
+from information_hunters.insights import activity_view, errors_view, performance_view
 from information_hunters.models import Job, JobLog, Lead, Worker, utcnow
+from information_hunters.providers.connection import test_provider
 from information_hunters.secrets import SECRET_NAMES, save_secret, secret_status
 
 
@@ -40,6 +51,14 @@ class SecretIn(BaseModel):
     value: str = Field(min_length=1)
 
 
+class HostValues(BaseModel):
+    values: dict[str, str] = Field(default_factory=dict)
+
+
+class ProviderTest(BaseModel):
+    provider: str
+
+
 def create_app() -> FastAPI:
     app = FastAPI(title="Information Hunters", version="0.1.0")
 
@@ -55,9 +74,9 @@ def create_app() -> FastAPI:
             session.close()
 
     def authorised(authorization: str | None = Header(default=None)) -> None:
-        expected = get_settings().internal_api_token
+        expected = (get_settings().internal_api_token or "").strip()
         if not expected:
-            raise HTTPException(503, "API token is not configured")
+            raise HTTPException(503, "INTERNAL_API_TOKEN is not configured")
         if not authorization or not authorization.lower().startswith("bearer "):
             raise HTTPException(401, "Missing token")
         token = authorization.split(" ", 1)[1].strip()
@@ -105,8 +124,7 @@ def create_app() -> FastAPI:
 
     @app.get("/leads")
     def list_leads(
-        session: Session = Depends(db),
-        _: None = Depends(authorised),
+        session: Session = Depends(db), _: None = Depends(authorised),
         q: str | None = None,
         category: str | None = None,
         location: str | None = None,
@@ -125,8 +143,7 @@ def create_app() -> FastAPI:
 
     @app.get("/leads/export")
     def export_leads(
-        session: Session = Depends(db),
-        _: None = Depends(authorised),
+        session: Session = Depends(db), _: None = Depends(authorised),
         q: str | None = None,
         category: str | None = None,
         location: str | None = None,
@@ -251,6 +268,7 @@ def create_app() -> FastAPI:
             job.rejected_count = 0
             job.error = None
             job.finished_at = None
+            job.started_at = None
         job.status = "queued"
         job.stage = "Queued"
         session.commit()
@@ -283,12 +301,47 @@ def create_app() -> FastAPI:
         session.commit()
         return _job_out(job)
 
+    @app.get("/fleet")
+    def fleet(session: Session = Depends(db), _: None = Depends(authorised)) -> dict:
+        """Scrapers (cloud workers) + bots (pipeline roles), Find-style."""
+        return _fleet_payload(session)
+
+    @app.post("/fleet/cloud/start")
+    def fleet_cloud_start(session: Session = Depends(db), _: None = Depends(authorised)) -> dict:
+        try:
+            return start_cloud_worker(session)
+        except RuntimeError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+
+    @app.post("/fleet/cloud/stop")
+    def fleet_cloud_stop(session: Session = Depends(db), _: None = Depends(authorised)) -> dict:
+        try:
+            return stop_cloud_worker(session)
+        except RuntimeError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+
+    @app.get("/bots")
+    def bots(session: Session = Depends(db), _: None = Depends(authorised)) -> list:
+        data = _fleet_payload(session)
+        return data["scrapers"] + data["bots"]
+
+    @app.get("/models")
+    def models(session: Session = Depends(db), _: None = Depends(authorised)) -> list:
+        return list(_fleet_payload(session)["models_by_id"].values())
+
     @app.get("/settings")
     def settings_view(session: Session = Depends(db), _: None = Depends(authorised)) -> dict:
         settings = get_settings()
+        database_url = settings.resolved_database_url()
         return {
             "demo_mode": settings.demo_mode,
-            "database": "postgres" if settings.database_url.startswith("postgresql") else "sqlite",
+            "database": "postgres" if database_url.startswith("postgresql") else "sqlite",
+            "supabase_url_set": bool(settings.supabase_url),
+            "supabase_key_set": bool(settings.supabase_service_role_key),
             "can_edit_secrets": bool(settings.secrets_master_key),
             "secrets": [secret_status(session, name) for name in SECRET_NAMES],
         }
@@ -303,7 +356,234 @@ def create_app() -> FastAPI:
             raise HTTPException(400, str(exc)) from exc
         return secret_status(session, body.name)
 
+    @app.post("/settings/test")
+    def test_settings(body: ProviderTest, session: Session = Depends(db), _: None = Depends(authorised)) -> dict:
+        if body.provider in {"companies_house", "google_places", "scrapingbee", "brightdata", "supabase"}:
+            result = test_provider(session, body.provider)
+            if body.provider == "scrapingbee" and result.status == "quota_exhausted":
+                from information_hunters.telemetry import mark_quota
+
+                mark_quota(session, "scrapingbee", result.detail)
+            return {"ok": result.ok, "status": result.status, "detail": result.detail, "usage": result.usage}
+        try:
+            return test_host(session, body.provider)
+        except HostRequestError as exc:
+            raise HTTPException(exc.http_status, exc.message) from exc
+
+    @app.get("/hosts")
+    def hosts(session: Session = Depends(db), _: None = Depends(authorised)) -> dict:
+        return list_hosts(session)
+
+    @app.post("/hosts/{provider}")
+    def put_host(provider: str, body: HostValues, session: Session = Depends(db), _: None = Depends(authorised)) -> dict:
+        try:
+            return save_host(session, provider, body.values)
+        except HostRequestError as exc:
+            raise HTTPException(exc.http_status, exc.message) from exc
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(400, str(exc)) from exc
+
+    @app.post("/hosts/{provider}/test")
+    def host_test(provider: str, session: Session = Depends(db), _: None = Depends(authorised)) -> dict:
+        try:
+            return test_host(session, provider)
+        except HostRequestError as exc:
+            raise HTTPException(exc.http_status, exc.message) from exc
+
+    @app.post("/hosts/{provider}/start")
+    def host_start(provider: str, session: Session = Depends(db), _: None = Depends(authorised)) -> dict:
+        try:
+            return start_host(session, provider)
+        except HostRequestError as exc:
+            raise HTTPException(exc.http_status, exc.message) from exc
+
+    @app.post("/hosts/{provider}/stop")
+    def host_stop(provider: str, session: Session = Depends(db), _: None = Depends(authorised)) -> dict:
+        try:
+            return stop_host(session, provider)
+        except HostRequestError as exc:
+            raise HTTPException(exc.http_status, exc.message) from exc
+
+    @app.post("/hosts/{provider}/refresh")
+    def host_refresh(provider: str, session: Session = Depends(db), _: None = Depends(authorised)) -> dict:
+        try:
+            return refresh_host(session, provider)
+        except HostRequestError as exc:
+            raise HTTPException(exc.http_status, exc.message) from exc
+
+    @app.get("/performance")
+    def performance(
+        session: Session = Depends(db),
+        _: None = Depends(authorised),
+        host: str | None = None,
+        worker: str | None = None,
+        limit: int = Query(100, ge=1, le=200),
+    ) -> dict:
+        return performance_view(session, host=host, worker=worker, limit=limit)
+
+    @app.get("/errors")
+    def errors(
+        session: Session = Depends(db),
+        _: None = Depends(authorised),
+        host: str | None = None,
+        provider: str | None = None,
+        error_type: str | None = None,
+        limit: int = Query(200, ge=1, le=500),
+    ) -> dict:
+        return errors_view(session, host=host, provider=provider, error_type=error_type, limit=limit)
+
+    @app.get("/activity")
+    def activity(
+        session: Session = Depends(db),
+        _: None = Depends(authorised),
+        host: str | None = None,
+        kind: str | None = None,
+        limit: int = Query(80, ge=1, le=200),
+    ) -> dict:
+        return activity_view(session, host=host, kind=kind, limit=limit)
+
     return app
+
+
+def _fleet_payload(session: Session) -> dict:
+    settings = get_settings()
+    now = datetime.now(timezone.utc)
+    workers = session.query(Worker).order_by(Worker.last_seen.desc()).all()
+    live_workers = [
+        w
+        for w in workers
+        if w.last_seen and (now - (w.last_seen if w.last_seen.tzinfo else w.last_seen.replace(tzinfo=timezone.utc))).total_seconds() < 90
+    ]
+    active_jobs = session.query(func.count(Job.id)).filter(Job.status.in_(["queued", "running"])).scalar() or 0
+    running = session.query(func.count(Job.id)).filter(Job.status == "running").scalar() or 0
+
+    def secret_on(name: str) -> tuple[bool, str | None]:
+        if not name:
+            return True, None
+        status = secret_status(session, name)
+        hint = f"···{status['last4']}" if status.get("last4") else name
+        return bool(status.get("configured")), hint if status.get("configured") else name
+
+    models_by_id: dict[str, dict] = {}
+    for mid, meta in MODEL_PROFILES.items():
+        env = meta.get("api_key_env") or ""
+        if mid == "apify":
+            ok_token, hint = secret_on("APIFY_TOKEN")
+            ok_actor, _ = secret_on("APIFY_ACTOR_ID")
+            connected = ok_token and ok_actor
+            hint = hint if ok_token else "APIFY_TOKEN + APIFY_ACTOR_ID"
+        elif env:
+            connected, hint = secret_on(env)
+        else:
+            connected, hint = True, None
+        models_by_id[mid] = enrich_model(mid, connected, hint)
+
+    # Also expose ScrapingBee as a helper model even if not primary for extract
+    if "scrapingbee" in models_by_id:
+        ok, hint = secret_on("SCRAPINGBEE_API_KEY")
+        models_by_id["scrapingbee"] = enrich_model("scrapingbee", ok, hint)
+
+    def model_for(model_id: str | None) -> dict | None:
+        if not model_id:
+            return None
+        return models_by_id.get(model_id)
+
+    # Scraper statuses — only cloud worker(s) you start/stop
+    db_cloud = settings.resolved_database_url().startswith("postgresql")
+    run = latest_run(session)
+    token_ready = github_ready(session)
+    if run and run.get("status") in {"queued", "in_progress", "waiting", "requested", "pending", "running"}:
+        scraper_status = "live"
+    elif not db_cloud:
+        scraper_status = "paused"
+    else:
+        scraper_status = "ready"
+    scrapers = []
+    for sid, profile in SCRAPER_PROFILES.items():
+        if sid == "github-actions":
+            status = scraper_status
+        else:
+            status = "idle"
+        agent = build_agent(sid, profile, status=status, model=model_for(profile.get("model_id")))
+        if sid == "github-actions":
+            if not db_cloud:
+                agent["activation"] = {
+                    "state": "needs_activate",
+                    "label": "Needs cloud DB",
+                    "detail": "Set SUPABASE_DB_URL (or a Postgres DATABASE_URL) so the cloud worker shares hunts with this desk.",
+                    "key_hint": "SUPABASE_DB_URL",
+                }
+            elif not token_ready:
+                agent["activation"] = {
+                    "state": "needs_activate",
+                    "label": "Needs GitHub token",
+                    "detail": "Paste a GitHub token on Hosts, or set GITHUB_TOKEN in the environment. GITHUB_REPO=owner/name is split into owner and repository.",
+                    "key_hint": "GITHUB_TOKEN",
+                }
+            elif status == "live":
+                agent["activation"] = {
+                    "state": "connected",
+                    "label": "Running",
+                    "detail": "Cloud worker run is in progress. Bots process queued hunts automatically.",
+                    "key_hint": None,
+                }
+            else:
+                agent["activation"] = {
+                    "state": "connected",
+                    "label": "Ready",
+                    "detail": "Press Start to run now and turn the 15-minute schedule on. Stop pauses that schedule. Device can be off.",
+                    "key_hint": None,
+                }
+            agent["cloud_run"] = run
+        scrapers.append(agent)
+
+    # Bot statuses from secrets + whether hunts are running
+    bots = []
+    for bid, profile in BOT_PROFILES.items():
+        model = model_for(profile.get("model_id"))
+        env = (MODEL_PROFILES.get(profile.get("model_id") or "", {}) or {}).get("api_key_env") or ""
+        if bid == "score" or bid == "extract":
+            # extract works without key (direct); score always local
+            status = "live" if running else "ready"
+        elif env and model and not model.get("connected"):
+            status = "paused"
+        elif running:
+            status = "live"
+        elif model and model.get("connected"):
+            status = "ready"
+        elif settings.demo_mode:
+            status = "ready"
+        else:
+            status = "idle"
+        # Prefer ScrapingBee model detail on extract when that key is set
+        if bid == "extract" and models_by_id.get("scrapingbee", {}).get("connected"):
+            model = models_by_id["scrapingbee"]
+        bots.append(build_agent(bid, profile, status=status, model=model))
+
+    scrapers.sort(key=lambda row: (-row["importance"], row["name"]))
+    bots.sort(key=lambda row: (-row["importance"], row["name"]))
+
+    return {
+        "scrapers": scrapers,
+        "bots": bots,
+        "models_by_id": models_by_id,
+        "workers": [
+            {
+                "id": w.id,
+                "hostname": w.hostname,
+                "last_seen": w.last_seen.isoformat() if w.last_seen else None,
+                "current_job_id": w.current_job_id,
+                "live": w in live_workers,
+            }
+            for w in workers
+        ],
+        "active_jobs": active_jobs,
+        "database": "postgres" if db_cloud else "sqlite",
+        "cloud_run": run,
+        "can_start_cloud": token_ready and db_cloud,
+    }
 
 
 def _require_job(session: Session, job_id: str) -> Job:

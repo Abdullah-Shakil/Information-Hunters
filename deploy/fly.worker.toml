@@ -2,7 +2,7 @@
 # Prefer .github/workflows/cloud-worker.yml if you want a free scheduled runner.
 #
 # fly apps create ih-worker
-# fly secrets set -a ih-worker DATABASE_URL='postgresql+psycopg://...' DEMO_MODE=false SECRETS_MASTER_KEY=... INTERNAL_API_TOKEN=...
+# fly secrets set -a ih-worker DATABASE_URL='postgresql+psycopg://...' DEMO_MODE=false SECRETS_MASTER_KEY=...
 # fly deploy -c deploy/fly.worker.toml -a ih-worker
 
 app = 'ih-worker'

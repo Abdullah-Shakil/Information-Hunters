@@ -9,7 +9,16 @@ from information_hunters.providers.base import EnrichedCompany, Verification
 from information_hunters.providers.fetchers import build_fetcher
 from information_hunters.providers.html_extract import extract_contacts
 from information_hunters.providers.safety import usable_website
+from information_hunters.ops import is_quota
 from information_hunters.secrets import resolve_secret
+from information_hunters.telemetry import record_error
+
+
+def _safe_error(exc: Exception) -> str:
+    text = str(exc)
+    if "api_key=" in text or "token=" in text:
+        return type(exc).__name__
+    return text[:300]
 
 
 def apply_verification_contacts(company: EnrichedCompany, verification: Verification) -> None:
@@ -32,14 +41,28 @@ def apply_verification_contacts(company: EnrichedCompany, verification: Verifica
 
 
 def pull_extra_contacts(session: Session, job: Job, company: EnrichedCompany) -> None:
-    secrets = {name: resolve_secret(session, name) for name in ("SCRAPINGBEE_API_KEY", "APIFY_TOKEN", "APIFY_ACTOR_ID")}
+    secrets = {name: resolve_secret(session, name) for name in ("SCRAPINGBEE_API_KEY", "BRIGHTDATA_API_TOKEN", "BRIGHTDATA_ZONE", "APIFY_TOKEN", "APIFY_ACTOR_ID")}
     if company.website and job.contact_fetcher != "none":
         fetcher = build_fetcher(job.contact_fetcher or "auto", secrets)
         if fetcher is not None:
             try:
                 html = fetcher.fetch(company.website)
             except Exception as exc:
-                company.sources.append({"provider": fetcher.name, "reference": f"fetch failed: {exc}"[:300]})
+                message = _safe_error(exc)
+                company.sources.append({"provider": fetcher.name, "reference": f"fetch failed: {message}"[:300]})
+                record_error(
+                    session,
+                    message,
+                    error_type=type(exc).__name__,
+                    provider=fetcher.name,
+                    job=job,
+                    context={"company": company.company_number},
+                    commit=True,
+                )
+                if fetcher.name == "scrapingbee" and is_quota(402 if "credit" in message.lower() else 400, {"message": message}):
+                    from information_hunters.telemetry import mark_quota
+
+                    mark_quota(session, "scrapingbee", message)
             else:
                 found = extract_contacts(html)
                 if found.get("email") and not company.email:
