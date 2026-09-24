@@ -1,0 +1,51 @@
+# Free cloud worker: claim queued hunts every 15 minutes without your PC.
+# Requires a hosted Postgres DATABASE_URL or SUPABASE_DB_URL (Supabase free tier).
+#
+# Repo → Settings → Secrets and variables → Actions:
+#   DATABASE_URL or SUPABASE_DB_URL, SECRETS_MASTER_KEY
+#   plus any provider keys you use (optional if those keys are already in the database)
+#
+# Start on the Scrapers or Hosts page sets the repository variable
+# CLOUD_WORKER_ENABLED=true and dispatches this workflow.
+# Stop sets CLOUD_WORKER_ENABLED=false and cancels the current run.
+# If that variable is unset, the schedule still runs.
+
+name: Cloud worker
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+jobs:
+  once:
+    if: ${{ vars.CLOUD_WORKER_ENABLED != 'false' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: pip install --quiet .
+      - name: Process queued hunts
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          SECRETS_MASTER_KEY: ${{ secrets.SECRETS_MASTER_KEY }}
+          DEMO_MODE: "false"
+          COMPANIES_HOUSE_API_KEY: ${{ secrets.COMPANIES_HOUSE_API_KEY }}
+          GOOGLE_PLACES_API_KEY: ${{ secrets.GOOGLE_PLACES_API_KEY }}
+          SCRAPINGBEE_API_KEY: ${{ secrets.SCRAPINGBEE_API_KEY }}
+          APIFY_TOKEN: ${{ secrets.APIFY_TOKEN }}
+          APIFY_ACTOR_ID: ${{ secrets.APIFY_ACTOR_ID }}
+          CONTACT_FETCHER: auto
+          HOST_ID: github_actions
+          WORKER_ID: github-actions
+        run: |
+          if [ -z "$DATABASE_URL" ] && [ -z "$SUPABASE_DB_URL" ]; then
+            echo "Add a DATABASE_URL or SUPABASE_DB_URL repository secret (Supabase session-pooler URI)."
+            exit 1
+          fi
+          python -m information_hunters.once

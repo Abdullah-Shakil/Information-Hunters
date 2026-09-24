@@ -103,7 +103,6 @@ export default function HuntsPage() {
               <option value="auto">Auto</option>
               <option value="direct">Direct public page</option>
               <option value="scrapingbee">ScrapingBee</option>
-              <option value="brightdata">Bright Data</option>
               <option value="playwright">Playwright</option>
               <option value="none">None</option>
             </select>

@@ -69,10 +69,6 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
       ...(init?.headers || {}),
     },
   });
-  if (response.status === 401) {
-    window.location.href = "/login";
-    throw new Error("Sign in required");
-  }
   if (!response.ok) throw new Error(await parseError(response));
   return response.json() as Promise<T>;
 }

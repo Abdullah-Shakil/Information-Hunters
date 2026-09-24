@@ -26,7 +26,7 @@ npm install
 npm run dev
 ```
 
-Open http://127.0.0.1:3000 and sign in with the demo password `hunter-demo`. Create a hunt for plumbers in Manchester. The worker writes prioritised leads into SQLite (`information_hunters.db`). Demo mode needs no API keys.
+Open http://127.0.0.1:3000. Create a hunt for plumbers in Manchester. The worker writes prioritised leads into SQLite (`information_hunters.db`). Demo mode needs no API keys. The desk has no password page. The Next.js server still sends `INTERNAL_API_TOKEN` to the Python API, and the API rejects every data route that does not carry that bearer token.
 
 One-shot mode, for a Cloud Run Job or a cron host:
 
@@ -38,7 +38,7 @@ HTTP tick mode, for a platform that can only wake an HTTP service:
 
 ```bash
 uvicorn information_hunters.http_worker:create_app --factory --host 0.0.0.0 --port 8080
-# POST /tick with Authorization: Bearer $WORKER_TOKEN (falls back to INTERNAL_API_TOKEN)
+# POST /tick with Authorization: Bearer $WORKER_TOKEN, or $INTERNAL_API_TOKEN when WORKER_TOKEN is unset
 ```
 
 ## Tests
@@ -53,12 +53,12 @@ See `.env.example`. Keys saved in the website are encrypted with `SECRETS_MASTER
 
 | Variable | Purpose |
 | --- | --- |
-| `DATABASE_URL` | `sqlite:///./information_hunters.db` or a Postgres URI |
-| `SUPABASE_DB_URL` | Supabase Postgres URI. When set, this is the database for the API and workers. `postgresql://` is rewritten to `postgresql+psycopg://`, and `sslmode=require` is added for Supabase hosts. |
+| `DATABASE_URL` | `sqlite:///./information_hunters.db` or a Postgres URI. Used when `SUPABASE_DB_URL` is empty. |
+| `SUPABASE_DB_URL` | Supabase Postgres URI. When set, this is the database for the API and workers. `postgresql://` is rewritten to `postgresql+psycopg://`, and `sslmode=require` is added for Supabase hosts. On Windows, use the IPv4 session pooler (`aws-0-REGION.pooler.supabase.com:5432`). |
 | `SUPABASE_URL` | `https://<project>.supabase.co`. Used by the Settings “Test connection” button. Not required for workers. |
 | `SUPABASE_SERVICE_ROLE_KEY` | Server-only key for that connection test. Never put it in the browser. The anon key is not used. |
-| `INTERNAL_API_TOKEN` | Shared secret between the Next.js server and the Python API |
-| `DEMO_PASSWORD` / `AUTH_SECRET` | Password gate for the website |
+| `INTERNAL_API_TOKEN` | Shared secret between the Next.js server and the Python API. Required. The desk has no password page. |
+| `WORKER_TOKEN` | Optional separate bearer for a public HTTP `/tick` URL. If empty, `/tick` requires `INTERNAL_API_TOKEN`. |
 | `DEMO_MODE` | Synthetic catalogue when no live provider is selected |
 | `SECRETS_MASTER_KEY` | Encrypts keys saved from the website. Every worker that should read those keys needs the same value. |
 | `HOST_ID` | Optional label on activity and performance rows (`oracle_cloud`, `github_actions`, `apify`, …) |
@@ -67,6 +67,9 @@ See `.env.example`. Keys saved in the website are encrypted with `SECRETS_MASTER
 | `SCRAPINGBEE_API_KEY` | Optional fetch proxy. Free plan: 1,000 credits. |
 | `BRIGHTDATA_API_TOKEN` / `BRIGHTDATA_ZONE` | Optional paid Bright Data fetch. Not a free tier. |
 | `APIFY_TOKEN` / `APIFY_ACTOR_ID` | Free-plan actor host and optional contact enrichment |
+| `GITHUB_TOKEN` | Optional env fallback for the GitHub host. The Hosts page stores the same token encrypted. |
+| `GITHUB_REPO` | `owner/name`. Split into the Hosts owner and repository fields when those are empty. Default `Abdullah-Shakil/Information-Hunters`. |
+| `GITHUB_WORKFLOW` / `GITHUB_REF` | Default `cloud-worker.yml` and `main`. |
 | `CONTACT_FETCHER` | `auto`, `direct`, `scrapingbee`, `brightdata`, `playwright`, `none` |
 
 Playwright is an optional extra (`pip install -e ".[browser]"` then `playwright install chromium`). `pip install playwright-stealth` is picked up automatically when it is installed; the fetch still works without it. Playwright is a normal headless browser for public pages, not a way past logins.
@@ -115,7 +118,7 @@ Limits below are the public allowances as of September 2026. Check the provider�
 | Service | Role | Free limits | Keys to paste | Where to get them | Start / Stop |
 | --- | --- | --- | --- | --- | --- |
 | Oracle Cloud Always Free | Always-on VM worker | Ampere A1 up to 2 OCPUs and 12 GB (reduced from 4 OCPU / 24 GB in June 2026), plus AMD micro instances (1/8 OCPU, 1 GB). Capacity errors are common. | Tenancy OCID, user OCID, fingerprint, API private key, region, instance OCID | [OCI API keys](https://cloud.oracle.com/identity/domains/my-profile/api-keys) | Yes. InstanceAction START and STOP. |
-| GitHub Actions | Scheduled-style worker in a repo | 2,000 minutes/month on private repos. Public repo minutes are free. One job ends after 6 hours. | Personal access token (repo + workflow, or Actions read/write), owner, repo. Workflow file defaults to `hunt.yml`, ref `main`. | [github.com/settings/tokens](https://github.com/settings/tokens) | Yes. `workflow_dispatch` and cancel run. |
+| GitHub Actions | Scheduled worker in a repo | 2,000 minutes/month on private repos. Public repo minutes are free. Shipped workflow: one `once` batch, 30 minute timeout, every 15 minutes. GitHub ends any job after 6 hours. | Personal access token (repo + workflow, or Actions read/write), owner, repo. Workflow file defaults to `cloud-worker.yml`, ref `main`. `GITHUB_REPO=owner/name` in the environment is split for you. | [github.com/settings/tokens](https://github.com/settings/tokens) | Yes. `workflow_dispatch`, cancel run, and the `CLOUD_WORKER_ENABLED` variable so Stop pauses the cron. |
 | Google Cloud Run Jobs + Cloud Scheduler | Job that Google re-launches | Jobs: 240,000 vCPU-seconds and 450,000 GiB-seconds / month in a US region such as `us-central1`. Scheduler: 3 jobs per billing account, free no matter how often they fire. | Service account JSON, project id, region, job name, scheduler id | [Service accounts](https://console.cloud.google.com/iam-admin/serviceaccounts) | Yes. Runs the job, creates/resumes the scheduler, pause + cancel on Stop. |
 | Apify | Actor that polls, plus hourly restart | $5 platform credits / month. No card. Unused credit expires. The free plan is blocked when the credit is gone. | API token, actor id (`username~name`) | [Apify integrations](https://console.apify.com/account/integrations) | Yes. Starts the run, enables a schedule, abort + disable on Stop. |
 | Koyeb | Pausable web service | One free instance: 0.1 vCPU, 512 MB, 2 GB disk, Frankfurt or Washington. It cannot be a worker, and it sleeps after 1 hour with no HTTP traffic. | API token, service id | [Koyeb API tokens](https://app.koyeb.com/account/api) | Yes, pause and resume. It does not keep scraping while asleep. |
@@ -153,9 +156,9 @@ The repo ships the worker image, the GitHub workflow, the Apify actor file, the 
 
 **GitHub Actions**
 
-1. Push this repo (the workflow is `.github/workflows/hunt.yml` and only runs on `workflow_dispatch`).
-2. Repository secrets: `DATABASE_URL` (required), `SECRETS_MASTER_KEY` (so website-saved keys decrypt). Provider keys as secrets are optional if they already live in Supabase.
-3. Paste a token, owner, and repo on the Hosts page. Start dispatches the workflow. Stop cancels it. A single run lasts at most 6 hours; press Start again the next time. Public repositories do not spend the 2,000 private minutes.
+1. Push this repo. The workflow is `.github/workflows/cloud-worker.yml` (schedule every 15 minutes, plus `workflow_dispatch`).
+2. Repository secrets: `DATABASE_URL` or `SUPABASE_DB_URL` (required), `SECRETS_MASTER_KEY` (so website-saved keys decrypt). Provider keys as secrets are optional if they already live in Supabase.
+3. Paste a token, owner, and repo on the Hosts page, or set `GITHUB_TOKEN` and `GITHUB_REPO=owner/name` in the environment. Start on Hosts or Scrapers dispatches the workflow and sets `CLOUD_WORKER_ENABLED=true`. Stop cancels the run and sets that variable to `false`, so the cron does not start another batch. Public repositories do not spend the 2,000 private minutes.
 
 **Google Cloud Run**
 
@@ -181,6 +184,12 @@ gcloud run jobs create information-hunters \
 2. On the actor, set `DATABASE_URL`, `SECRETS_MASTER_KEY`, and `HOST_ID=apify`.
 3. Paste the token and actor id. Start launches a run and an hourly exclusive schedule. Stop aborts the run and disables the schedule. The $5 credit is checked before a start.
 
+## Hunts while the PC is off
+
+The desk can stay on your machine. A cloud worker only sees those hunts when it shares the database: set `SUPABASE_DB_URL` (preferred) or a Postgres `DATABASE_URL` on both sides. GitHub Actions is the scheduled free path (`.github/workflows/cloud-worker.yml`, also the Start/Stop button on Scrapers and Hosts). Oracle and Cloud Run are the other free hosts in the table above.
+
+`deploy/fly.worker.toml` and `deploy/fly.api.toml` are included if you later pay for Fly. Fly has no free tier for new accounts, so it is not a Hosts-page adapter and Start/Stop does not pretend to control it.
+
 **Koyeb and Render**
 
 Create the free **web** service yourself (their free tiers cannot be a background worker). Set `DATABASE_URL` and `SECRETS_MASTER_KEY` on that service. Paste the token and service id. Start and Stop call pause/resume or suspend/resume. Read the limits on the card: both sleep when idle, so they are a poor fit for a hunt that must continue with no incoming HTTP traffic. Prefer Oracle, GitHub Actions, or Cloud Run for that.
@@ -196,20 +205,20 @@ Discovery, verification, and page fetch are separate interfaces in `information_
 - **Companies House API** — name, number, status, address, SIC, incorporation date. It does not provide phone, email, or website.
 - **Companies House public search** — BeautifulSoup fallback for the same registry fields when you have no API key.
 - **Google Places** — trading status, phone, and website URI. Official API only. The worker does not scrape Google.
-- **Direct / ScrapingBee / Bright Data / Playwright** — fetch a public `http(s)` page (usually the business's own site) and read a visible email or phone. LinkedIn, other social logins, `file://`, and private IP ranges are refused.
+- **Direct / ScrapingBee / Bright Data / Playwright** — fetch a public `http(s)` page (usually the business's own site) and read a visible email or phone. LinkedIn, other social logins, `file://`, and private IP ranges are refused. Bright Data is an optional paid fetcher, not a free host.
 - **Apify** — runs the actor id you configure and maps `email`, `phone`, `mobile`, and `website` from the dataset. The same token can also host the worker. No actor is hardcoded.
 
 ## Website
 
-Next.js is a password-gated control plane. The session cookie stays on the Next.js origin. Server routes proxy to the Python API with `INTERNAL_API_TOKEN`.
+Next.js is a local control plane. There is no password page. Server routes proxy to the Python API with `INTERNAL_API_TOKEN`; the API rejects data routes that omit it. Keep the API on localhost or behind your own network.
 
+- **Overview, Leads, Hunts** — queue hunts, filter leads, export CSV. Do-not-contact is stored on the lead and omitted from the default export.
+- **Scrapers** — Start and Stop the GitHub Actions cloud worker (same adapter as Hosts). The card stays disabled until the database is Postgres/Supabase and a GitHub token is set.
+- **Bots** — Discover, Verify, Extract, and Score. They run when a worker claims a hunt. You do not start them separately.
 - **Hosts** — paste each provider’s keys and ids, test the connection, Start, and Stop. Secrets are masked (last four characters only).
-- **Live Activity** — polls every few seconds. Searching and found leads, including email and mobile, are stored in the database.
-- **Performance** — per run and per host: companies searched, leads, email, mobile, no website, success rate, duration, and every error. Filters sit above the tables. Bars show leads by host.
-- **Leads** — filter and export CSV. Do-not-contact is stored on the lead and omitted from the default export.
-- **Settings** — Companies House, Places, ScrapingBee, and optional Bright Data, plus the Supabase connection test.
-
-Change `DEMO_PASSWORD`, `AUTH_SECRET`, and `INTERNAL_API_TOKEN` before anyone else can reach the service. Set `NEXT_PUBLIC_DEMO_HINT=false` outside a local demo. Set `COOKIE_SECURE=true` behind HTTPS.
+- **Activity** — polls every few seconds. Searching and found leads, including email and mobile, are stored in the database.
+- **Performance** — per run and per host: companies searched, leads, email, mobile, no website, success rate, duration, and every error.
+- **Settings** — Companies House, Places, ScrapingBee, and optional Bright Data, plus the Supabase connection test. The header has a day/night theme toggle.
 
 ## Compliance notes (UK GDPR and PECR)
 
@@ -227,10 +236,11 @@ This is operational hygiene, not legal advice.
 ```
 information_hunters/    Python API, worker, scoring, providers, host adapters
 migrations/001_supabase.sql
-web/                    Next.js control plane (hosts, activity, performance)
+web/                    Next.js desk (scrapers, bots, hosts, activity, performance, theme)
 docker/worker.Dockerfile
-.github/workflows/hunt.yml
+.github/workflows/cloud-worker.yml
 deploy/oracle/          systemd unit for an Always Free VM
+deploy/fly.*.toml       optional paid Fly manifests, not a free host adapter
 .actor/actor.json       Apify actor manifest
 tests/                  Scoring, API, host adapters, Supabase URL, activity
 ```

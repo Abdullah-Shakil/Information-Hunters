@@ -4,9 +4,9 @@ from information_hunters.pipeline import process_job
 
 
 def test_hunt_writes_activity_performance_and_hides_nothing_sensitive(client, auth_header):
-    assert client.get("/activity").status_code == 401
-    assert client.get("/performance").status_code == 401
-    assert client.get("/errors").status_code == 401
+    assert client.get("/activity", headers={"X-Test-No-Auth": "1"}).status_code == 401
+    assert client.get("/performance", headers={"X-Test-No-Auth": "1"}).status_code == 401
+    assert client.get("/errors", headers={"X-Test-No-Auth": "1"}).status_code == 401
 
     created = client.post(
         "/jobs",

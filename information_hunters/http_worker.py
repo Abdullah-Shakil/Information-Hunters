@@ -19,9 +19,12 @@ def create_app() -> FastAPI:
         init_db()
 
     def authorised(authorization: str | None = Header(default=None)) -> None:
+        # Public /tick must present WORKER_TOKEN, or INTERNAL_API_TOKEN when that is the only secret set.
         settings = get_settings()
-        expected = settings.worker_token or settings.internal_api_token
-        if not expected or not authorization or not authorization.lower().startswith("bearer "):
+        expected = (settings.worker_token or settings.internal_api_token or "").strip()
+        if not expected:
+            raise HTTPException(503, "WORKER_TOKEN or INTERNAL_API_TOKEN is not configured")
+        if not authorization or not authorization.lower().startswith("bearer "):
             raise HTTPException(401, "Missing token")
         token = authorization.split(" ", 1)[1].strip()
         if not hmac.compare_digest(token, expected):

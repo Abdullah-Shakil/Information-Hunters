@@ -75,11 +75,51 @@ def test_github_start_stop_and_token_is_not_returned(client, auth_header):
     assert started.json()["remote_id"] == "42"
     assert token not in started.text
     assert any(path.endswith("/dispatches") for _, path in calls)
+    assert any("cloud-worker.yml" in path for _, path in calls)
 
     stopped = client.post("/hosts/github_actions/stop", headers=auth_header)
     assert stopped.status_code == 200
     assert stopped.json()["status"] == "stopped"
     assert any(path.endswith("/cancel") for _, path in calls)
+
+
+def test_fleet_start_uses_the_same_github_adapter(client, monkeypatch):
+    monkeypatch.setenv("SUPABASE_DB_URL", "postgresql://user:pass@db.proj.supabase.co:5432/postgres")
+    monkeypatch.setenv("GITHUB_TOKEN", "ghp_fromenvtoken99")
+    monkeypatch.setenv("GITHUB_REPO", "owner/hunters")
+    from information_hunters.config import get_settings
+
+    get_settings.cache_clear()
+    calls = []
+    state = {"dispatched": False}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append((request.method, request.url.path))
+        if request.url.path == "/user":
+            return httpx.Response(200, json={"login": "owner"})
+        if request.url.path == "/repos/owner/hunters":
+            return httpx.Response(200, json={"private": False})
+        if request.url.path.endswith("/dispatches"):
+            state["dispatched"] = True
+            return httpx.Response(204)
+        if request.url.path.endswith("/runs"):
+            runs = [{"id": 7, "status": "in_progress", "html_url": "https://github.com/owner/hunters/actions/runs/7"}] if state["dispatched"] else []
+            return httpx.Response(200, json={"workflow_runs": runs})
+        if request.url.path.endswith("/runs/7/cancel"):
+            return httpx.Response(202, json={})
+        return httpx.Response(404, json={"message": "missing"})
+
+    _install(handler)
+    fleet = client.get("/fleet").json()
+    assert fleet["database"] == "postgres"
+    assert fleet["can_start_cloud"] is True
+    started = client.post("/fleet/cloud/start")
+    assert started.status_code == 200, started.text
+    assert started.json()["status"] == "running"
+    assert any(path.endswith("/workflows/cloud-worker.yml/dispatches") for _, path in calls)
+    stopped = client.post("/fleet/cloud/stop")
+    assert stopped.status_code == 200, stopped.text
+    assert stopped.json()["status"] == "stopped"
 
 
 def test_github_private_minutes_mark_quota_without_dispatch(client, auth_header):

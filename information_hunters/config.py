@@ -16,8 +16,6 @@ class Settings(BaseSettings):
     companies_house_api_key: str = ""
     google_places_api_key: str = ""
     scrapingbee_api_key: str = ""
-    brightdata_api_token: str = ""
-    brightdata_zone: str = ""
     apify_token: str = ""
     apify_actor_id: str = ""
     contact_fetcher: str = "auto"
@@ -28,7 +26,10 @@ class Settings(BaseSettings):
     companies_house_rps: float = 2.0
     demo_step_delay_ms: int = 120
     worker_token: str = ""
-
+    github_token: str = ""
+    github_repo: str = "Abdullah-Shakil/Information-Hunters"
+    github_workflow: str = "cloud-worker.yml"
+    github_ref: str = "main"
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     def resolved_database_url(self) -> str:

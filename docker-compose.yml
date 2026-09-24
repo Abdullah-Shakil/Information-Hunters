@@ -25,10 +25,10 @@ services:
       dockerfile: docker/api.Dockerfile
     environment:
       DATABASE_URL: postgresql+psycopg://hunter:hunter@postgres:5432/information_hunters
-      INTERNAL_API_TOKEN: dev-internal-token
       DEMO_MODE: "true"
       SECRETS_MASTER_KEY: dev-master-key-change-me
       DEMO_STEP_DELAY_MS: "200"
+      INTERNAL_API_TOKEN: dev-internal-token
     ports:
       - "8000:8000"
     depends_on:
@@ -42,10 +42,10 @@ services:
     command: ["python", "-m", "information_hunters.worker"]
     environment:
       DATABASE_URL: postgresql+psycopg://hunter:hunter@postgres:5432/information_hunters
-      INTERNAL_API_TOKEN: dev-internal-token
       DEMO_MODE: "true"
       SECRETS_MASTER_KEY: dev-master-key-change-me
       DEMO_STEP_DELAY_MS: "200"
+      INTERNAL_API_TOKEN: dev-internal-token
     depends_on:
       postgres:
         condition: service_healthy
@@ -58,10 +58,6 @@ services:
     environment:
       API_INTERNAL_URL: http://api:8000
       INTERNAL_API_TOKEN: dev-internal-token
-      DEMO_PASSWORD: hunter-demo
-      AUTH_SECRET: dev-auth-secret-change-me
-      NEXT_PUBLIC_DEMO_HINT: "true"
-      COOKIE_SECURE: "false"
     ports:
       - "3000:3000"
     depends_on:

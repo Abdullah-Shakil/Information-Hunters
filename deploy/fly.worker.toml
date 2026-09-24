@@ -1,0 +1,24 @@
+# Always-on cloud worker (long-poll). Needs a paid Fly machine or free allowance.
+# Prefer .github/workflows/cloud-worker.yml if you want a free scheduled runner.
+#
+# fly apps create ih-worker
+# fly secrets set -a ih-worker DATABASE_URL='postgresql+psycopg://...' DEMO_MODE=false SECRETS_MASTER_KEY=...
+# fly deploy -c deploy/fly.worker.toml -a ih-worker
+
+app = 'ih-worker'
+primary_region = 'lhr'
+
+[build]
+  dockerfile = 'docker/worker.Dockerfile'
+
+[env]
+  DEMO_MODE = 'false'
+  CONTACT_FETCHER = 'auto'
+
+[processes]
+  app = 'python -m information_hunters.worker'
+
+[[vm]]
+  size = 'shared-cpu-1x'
+  memory = '512mb'
+  cpus = 1

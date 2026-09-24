@@ -37,15 +37,16 @@ class GitHubActionsHost:
         if not checked.ok:
             return checked
         owner, repo = _slug(values["GITHUB_OWNER"]), _slug(values["GITHUB_REPO"])
-        workflow = _slug(values.get("GITHUB_WORKFLOW") or "hunt.yml")
+        workflow = _slug(values.get("GITHUB_WORKFLOW") or "cloud-worker.yml")
         ref = (values.get("GITHUB_REF") or "main").strip()
         if not owner or not repo or not workflow or not ref or " " in ref:
             return ActionResult(False, "error", "GitHub owner, repository, workflow, or ref is not valid.")
         with open_client() as client:
             headers = _headers(values["GITHUB_TOKEN"])
+            schedule = _set_schedule(client, headers, owner, repo, True)
             already = _active_run_id(client, headers, owner, repo, workflow)
             if already:
-                return ActionResult(True, "running", "A hunt workflow is already running. Stop cancels it.", remote_id=already, usage=checked.usage)
+                return ActionResult(True, "running", "A cloud worker run is already in progress." + schedule, remote_id=already, usage=checked.usage)
             dispatched = client.post(
                 f"{API}/repos/{owner}/{repo}/actions/workflows/{quote(workflow)}/dispatches",
                 headers=headers,
@@ -56,23 +57,24 @@ class GitHubActionsHost:
                 status = failure_status(dispatched.status_code, payload)
                 return ActionResult(False, status, f"GitHub did not start the workflow: {error_text(payload)}", usage=checked.usage)
             run_id = _active_run_id(client, headers, owner, repo, workflow)
-            detail = "Workflow dispatched. It keeps hunting until you stop it, the 6-hour job limit, or the free minutes run out."
+            detail = "Workflow dispatched. It runs queued hunts, then the 15-minute schedule starts another run while it is enabled." + schedule
             if run_id is None:
                 detail += " The run id was not listed yet; Stop will cancel whichever run is in progress."
             return ActionResult(True, "running", detail, remote_id=run_id, usage=checked.usage)
 
     def stop(self, values: dict, remote_id: str | None) -> ActionResult:
         owner, repo = _slug(values.get("GITHUB_OWNER", "")), _slug(values.get("GITHUB_REPO", ""))
-        workflow = _slug(values.get("GITHUB_WORKFLOW") or "hunt.yml")
+        workflow = _slug(values.get("GITHUB_WORKFLOW") or "cloud-worker.yml")
         if not owner or not repo or not values.get("GITHUB_TOKEN"):
             return ActionResult(False, "error", "GitHub owner, repository, and token are required.")
         with open_client() as client:
             headers = _headers(values["GITHUB_TOKEN"])
+            schedule = _set_schedule(client, headers, owner, repo, False)
             run_ids = [remote_id] if remote_id else []
             if not run_ids:
                 run_ids = _active_run_ids(client, headers, owner, repo, workflow)
             if not run_ids:
-                return ActionResult(True, "stopped", "No GitHub Actions run was in progress.")
+                return ActionResult(True, "stopped", "No GitHub Actions run was in progress." + schedule)
             errors = []
             for run_id in run_ids:
                 response = client.post(f"{API}/repos/{owner}/{repo}/actions/runs/{run_id}/cancel", headers=headers)
@@ -80,11 +82,11 @@ class GitHubActionsHost:
                     errors.append(error_text(read_body(response)))
             if errors:
                 return ActionResult(False, "error", "GitHub did not cancel the run: " + "; ".join(errors))
-            return ActionResult(True, "stopped", "Cancellation requested. The runner stops within a minute.")
+            return ActionResult(True, "stopped", "Cancellation requested. The runner stops within a minute." + schedule)
 
     def status(self, values: dict, remote_id: str | None) -> ActionResult:
         owner, repo = _slug(values.get("GITHUB_OWNER", "")), _slug(values.get("GITHUB_REPO", ""))
-        workflow = _slug(values.get("GITHUB_WORKFLOW") or "hunt.yml")
+        workflow = _slug(values.get("GITHUB_WORKFLOW") or "cloud-worker.yml")
         if not owner or not repo or not values.get("GITHUB_TOKEN"):
             return ActionResult(False, "error", "GitHub owner, repository, and token are required.")
         with open_client() as client:
@@ -166,3 +168,51 @@ def _run_state(run: dict) -> str:
     if status in _ACTIVE:
         return "running"
     return "stopped"
+
+
+def _set_schedule(client, headers, owner: str, repo: str, enabled: bool) -> str:
+    """Turn the cloud-worker cron on or off via the CLOUD_WORKER_ENABLED repository variable.
+
+    The workflow runs when the variable is unset or true, and skips when it is false.
+    A token that cannot write Actions variables still starts or cancels the current run.
+    """
+    name = "CLOUD_WORKER_ENABLED"
+    body = {"name": name, "value": "true" if enabled else "false"}
+    try:
+        patched = client.patch(f"{API}/repos/{owner}/{repo}/actions/variables/{name}", headers=headers, json=body)
+        if patched.status_code == 404:
+            created = client.post(f"{API}/repos/{owner}/{repo}/actions/variables", headers=headers, json=body)
+            if created.status_code >= 400:
+                return " The 15-minute schedule was not changed; this token may not be allowed to write Actions variables, so the cron can start another run."
+        elif patched.status_code >= 400:
+            return " The 15-minute schedule was not changed; this token may not be allowed to write Actions variables, so the cron can start another run."
+    except Exception:
+        return " The 15-minute schedule was not changed, so the cron can start another run."
+    if enabled:
+        return " The 15-minute schedule is on."
+    return " The 15-minute schedule stays off until you press Start."
+
+
+def peek_run(values: dict) -> dict | None:
+    """Latest workflow run for the desk. None when credentials are missing or GitHub cannot be read."""
+    owner, repo = _slug(values.get("GITHUB_OWNER", "")), _slug(values.get("GITHUB_REPO", ""))
+    workflow = _slug(values.get("GITHUB_WORKFLOW") or "cloud-worker.yml")
+    token = (values.get("GITHUB_TOKEN") or "").strip()
+    if not owner or not repo or not workflow or not token:
+        return None
+    try:
+        with open_client() as client:
+            runs = _runs(client, _headers(token), owner, repo, workflow)
+    except Exception:
+        return None
+    if not runs:
+        return None
+    run = runs[0]
+    return {
+        "id": run.get("id"),
+        "status": run.get("status"),
+        "conclusion": run.get("conclusion"),
+        "html_url": run.get("html_url"),
+        "created_at": run.get("created_at"),
+        "updated_at": run.get("updated_at"),
+    }
