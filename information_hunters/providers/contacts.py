@@ -32,7 +32,7 @@ def apply_verification_contacts(company: EnrichedCompany, verification: Verifica
 
 
 def pull_extra_contacts(session: Session, job: Job, company: EnrichedCompany) -> None:
-    secrets = {name: resolve_secret(session, name) for name in ("SCRAPINGBEE_API_KEY", "BRIGHTDATA_API_TOKEN", "BRIGHTDATA_ZONE", "APIFY_TOKEN", "APIFY_ACTOR_ID")}
+    secrets = {name: resolve_secret(session, name) for name in ("SCRAPINGBEE_API_KEY", "APIFY_TOKEN", "APIFY_ACTOR_ID")}
     if company.website and job.contact_fetcher != "none":
         fetcher = build_fetcher(job.contact_fetcher or "auto", secrets)
         if fetcher is not None:

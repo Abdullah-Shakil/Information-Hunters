@@ -26,7 +26,7 @@ npm install
 npm run dev
 ```
 
-Open http://127.0.0.1:3000 and sign in with the demo password `hunter-demo`. Create a hunt for plumbers in Manchester. The worker writes prioritised leads into SQLite (`information_hunters.db`).
+Open http://127.0.0.1:3000. Create a hunt for plumbers in Manchester. The worker writes prioritised leads into SQLite (`information_hunters.db`).
 
 One-shot mode, for a Cloud Run Job or a cron host:
 
@@ -55,14 +55,12 @@ See `.env.example`. Keys stay on the server. The Settings page can store them en
 | --- | --- |
 | `DATABASE_URL` | `sqlite:///./information_hunters.db` or `postgresql+psycopg://...` |
 | `INTERNAL_API_TOKEN` | Shared secret between the Next.js server and the Python API |
-| `DEMO_PASSWORD` / `AUTH_SECRET` | Local password gate for the website |
 | `DEMO_MODE` | Use the synthetic catalogue when no live provider is selected |
 | `COMPANIES_HOUSE_API_KEY` | Official Companies House REST API |
 | `GOOGLE_PLACES_API_KEY` | Places text search for trading status, phone, website |
 | `SCRAPINGBEE_API_KEY` | Optional fetch proxy for a public business page |
-| `BRIGHTDATA_API_TOKEN` / `BRIGHTDATA_ZONE` | Optional Bright Data Web Unlocker fetch |
 | `APIFY_TOKEN` / `APIFY_ACTOR_ID` | Optional actor for contact enrichment |
-| `CONTACT_FETCHER` | `auto`, `direct`, `scrapingbee`, `brightdata`, `playwright`, `none` |
+| `CONTACT_FETCHER` | `auto`, `direct`, `scrapingbee`, `playwright`, `none` |
 
 Playwright is an optional extra (`pip install -e ".[browser]"` then `playwright install chromium`). The default worker uses HTTP fetching. Playwright is a normal headless browser for public pages, not a way past logins.
 
@@ -95,19 +93,40 @@ export DATABASE_URL=postgresql+psycopg://hunter:hunter@localhost:5432/informatio
 
 Tables are created on startup (`create_all`). Move to migrations before you treat the database as production.
 
+## Run hunts with your PC off
+
+The desk can stay local. Hunts keep running only when **both** the database and a worker live in the cloud.
+
+1. **Hosted Postgres** — create a free [Neon](https://neon.tech) or [Supabase](https://supabase.com) project. Copy the connection string and use the SQLAlchemy form:
+   `postgresql+psycopg://USER:PASS@HOST/DB?sslmode=require`
+2. **Point the desk at that DB** — set `DATABASE_URL` in `.env` to the Neon/Supabase URL (not SQLite). Restart the local API. New hunts are written there.
+3. **Pick a cloud worker** (one is enough):
+
+| Option | Cost shape | How |
+| --- | --- | --- |
+| **GitHub Actions** (easiest free) | Free minutes | Push the repo, add Action secrets (`DATABASE_URL`, keys). Workflow `.github/workflows/cloud-worker.yml` runs `python -m information_hunters.once` every 15 minutes. |
+| **Fly.io worker** | Small always-on VM | `fly deploy -c deploy/fly.worker.toml` after `fly secrets set DATABASE_URL=...` |
+| **Oracle Always Free VM** | Free VM | Install Python, set env, run `python -m information_hunters.worker` under systemd |
+| **Cloud Run Job** | Per run | `python -m information_hunters.once` on a schedule |
+
+Optional: deploy the API with `deploy/fly.api.toml` and set `web/.env.development` `API_INTERNAL_URL` to that URL so the desk does not need local uvicorn.
+
+While SQLite stays on your laptop, a cloud worker cannot see your jobs — shared Postgres is required.
+
 ## Free and cheap hosts for workers
 
 Workers only need outbound HTTPS and `DATABASE_URL`. Put Postgres on Neon or Supabase free tiers if you want the database off your machine. Run one worker; `SKIP LOCKED` on Postgres lets you add more later.
 
 | Host | Pattern that fits | Always-on | Cold start | Outbound scraping | Notes |
 | --- | --- | --- | --- | --- | --- |
+| GitHub Actions | `python -m information_hunters.once` | Scheduled | Per run | Full | Free path in `.github/workflows/cloud-worker.yml`. Needs Neon/Supabase `DATABASE_URL`. |
 | Oracle Cloud Always Free Ampere VM | `python -m information_hunters.worker` | Yes | None | Full | Best free place for a long-polling worker. |
 | Google Cloud Run Jobs | `python -m information_hunters.once` | No | Per job | Full | Runs a queued hunt then exits. Free tier is request/job based, not a 24/7 VM. |
 | Google Cloud Run service | `http_worker` `POST /tick` | Only if min instances > 0 (paid) | Yes, if scaled to zero | Full | Pair with Cloud Scheduler. Request timeouts mean one tick should stay under the limit; the job checkpoint resumes. |
 | Google Cloud Functions | Same `/tick` idea, one batch | No | Yes | Full, short timeout | Split large hunts. Checkpointing is already in the job row. |
 | Cloudflare Workers | Thin ping only | Edge | Very fast | Poor fit | No Playwright, tight CPU, awkward long Postgres sessions. Do not run scraping here. A Worker can call your tick URL. |
-| Fly.io / Render / Railway | Polling worker | Depends on plan | Often, on free plans | Full while awake | Free instances sleep and will kill an in-progress hunt. Use a paid always-on machine or `once` triggered on a schedule. |
-| Neon or Supabase | Database only | Hosted | Connection cold starts | n/a | Use as `DATABASE_URL` for a worker hosted elsewhere. |
+| Fly.io | Polling worker (`deploy/fly.worker.toml`) | Paid/allowance | None if always-on | Full | Free machines often sleep; use a paid always-on machine or the GitHub Actions schedule. |
+| Neon or Supabase | Database only | Hosted | Connection cold starts | n/a | Required shared store so a cloud worker can claim jobs your desk queued. |
 
 Rate limits: Companies House public data API is commonly 600 requests per 5 minutes. The client defaults to 2 requests per second. Public HTML search is slower on purpose (about one request every 2 seconds) and sends an identifying User-Agent. Prefer the API.
 
@@ -118,14 +137,14 @@ Discovery, verification, and page fetch are separate interfaces in `information_
 - **Companies House API** — name, number, status, address, SIC, incorporation date. It does not provide phone, email, or website.
 - **Companies House public search** — BeautifulSoup fallback for the same registry fields when you have no API key.
 - **Google Places** — trading status, phone, and website URI. Official API only. The worker does not scrape Google.
-- **Direct / ScrapingBee / Bright Data / Playwright** — fetch a public `http(s)` page (usually the business's own site) and read a visible email or phone. LinkedIn, other social logins, `file://`, and private IP ranges are refused.
+- **Direct / ScrapingBee / Playwright** — fetch a public `http(s)` page (usually the business's own site) and read a visible email or phone. LinkedIn, other social logins, `file://`, and private IP ranges are refused.
 - **Apify** — runs the actor id you configure and maps `email`, `phone`, `mobile`, and `website` from the dataset. No actor is hardcoded.
 
 ## Website
 
-Next.js is a password-gated control plane. The session cookie stays on the Next.js origin. Server routes proxy to the Python API with `INTERNAL_API_TOKEN`. Leads can be filtered and exported to CSV. Do-not-contact is stored on the lead and omitted from the default export.
+Next.js is a local control plane for starting, pausing, and reading hunts, and for directing cloud workers. There is no login — the desk is meant to stay on your machine. Server routes proxy to the Python API with `INTERNAL_API_TOKEN`. Leads can be filtered and exported to CSV. Do-not-contact is stored on the lead and omitted from the default export.
 
-Change `DEMO_PASSWORD`, `AUTH_SECRET`, and `INTERNAL_API_TOKEN` before anyone else can reach the service. Set `NEXT_PUBLIC_DEMO_HINT=false` outside a local demo. Set `COOKIE_SECURE=true` behind HTTPS.
+Change `INTERNAL_API_TOKEN` before exposing the API beyond localhost.
 
 ## Compliance notes (UK GDPR and PECR)
 

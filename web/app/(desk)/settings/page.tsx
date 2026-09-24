@@ -10,8 +10,6 @@ const LABELS: Record<string, string> = {
   COMPANIES_HOUSE_API_KEY: "Companies House",
   GOOGLE_PLACES_API_KEY: "Google Places",
   SCRAPINGBEE_API_KEY: "ScrapingBee",
-  BRIGHTDATA_API_TOKEN: "Bright Data token",
-  BRIGHTDATA_ZONE: "Bright Data zone",
   APIFY_TOKEN: "Apify token",
   APIFY_ACTOR_ID: "Apify actor id",
 };

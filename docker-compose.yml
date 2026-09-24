@@ -58,10 +58,6 @@ services:
     environment:
       API_INTERNAL_URL: http://api:8000
       INTERNAL_API_TOKEN: dev-internal-token
-      DEMO_PASSWORD: hunter-demo
-      AUTH_SECRET: dev-auth-secret-change-me
-      NEXT_PUBLIC_DEMO_HINT: "true"
-      COOKIE_SECURE: "false"
     ports:
       - "3000:3000"
     depends_on:

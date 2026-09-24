@@ -1,0 +1,40 @@
+# Free cloud worker: claim queued hunts every 15 minutes without your PC.
+# Requires a hosted Postgres DATABASE_URL (Neon or Supabase free tier).
+#
+# Repo → Settings → Secrets and variables → Actions:
+#   DATABASE_URL, INTERNAL_API_TOKEN, SECRETS_MASTER_KEY
+#   plus any provider keys you use (COMPANIES_HOUSE_API_KEY, etc.)
+#
+# Local desk: set the same DATABASE_URL in .env so queued hunts land in that DB.
+
+name: Cloud worker
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+jobs:
+  once:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: pip install --quiet .
+      - name: Process queued hunts
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          INTERNAL_API_TOKEN: ${{ secrets.INTERNAL_API_TOKEN }}
+          SECRETS_MASTER_KEY: ${{ secrets.SECRETS_MASTER_KEY }}
+          DEMO_MODE: ${{ secrets.DEMO_MODE }}
+          COMPANIES_HOUSE_API_KEY: ${{ secrets.COMPANIES_HOUSE_API_KEY }}
+          GOOGLE_PLACES_API_KEY: ${{ secrets.GOOGLE_PLACES_API_KEY }}
+          SCRAPINGBEE_API_KEY: ${{ secrets.SCRAPINGBEE_API_KEY }}
+          APIFY_TOKEN: ${{ secrets.APIFY_TOKEN }}
+          APIFY_ACTOR_ID: ${{ secrets.APIFY_ACTOR_ID }}
+          CONTACT_FETCHER: auto
+        run: python -m information_hunters.once

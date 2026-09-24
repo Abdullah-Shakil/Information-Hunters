@@ -13,8 +13,6 @@ class Settings(BaseSettings):
     companies_house_api_key: str = ""
     google_places_api_key: str = ""
     scrapingbee_api_key: str = ""
-    brightdata_api_token: str = ""
-    brightdata_zone: str = ""
     apify_token: str = ""
     apify_actor_id: str = ""
     contact_fetcher: str = "auto"

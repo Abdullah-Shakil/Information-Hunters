@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { api } from "../lib/client";
 
@@ -14,7 +14,6 @@ const LINKS = [
 
 export default function Shell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const router = useRouter();
   const [live, setLive] = useState(false);
   const [workerLabel, setWorkerLabel] = useState("No worker seen");
 
@@ -41,12 +40,6 @@ export default function Shell({ children }: { children: React.ReactNode }) {
       clearInterval(timer);
     };
   }, []);
-
-  async function logout() {
-    await fetch("/api/logout", { method: "POST" });
-    router.push("/login");
-    router.refresh();
-  }
 
   return (
     <div className="shell">
@@ -78,9 +71,6 @@ export default function Shell({ children }: { children: React.ReactNode }) {
             <i />
             {workerLabel}
           </div>
-          <button className="btn ghost" type="button" onClick={() => void logout()}>
-            Sign out
-          </button>
         </footer>
       </aside>
       <div className="main">{children}</div>
